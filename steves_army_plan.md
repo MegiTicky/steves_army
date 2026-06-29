@@ -251,6 +251,10 @@ class CoverPosition {
 - [ ] TaCZ weapon integration
 - [ ] Damage and health system
 
+friendly check (check things on the path to prevent shooting friendlies)
+Better shooting AI with variable accruacy, based on target speed, distance, exposure, weapon used
+Different fire rate (eg short range with full auto weapon-->full auto, medium range with full auto-->short burst, long-->single)
+
 ### Phase 3: Cover System (Week 5-7)
 - [ ] Cover detection algorithm
 - [ ] Cover scoring system
