@@ -268,6 +268,14 @@ Different fire rate (eg short range with full auto weapon-->full auto, medium ra
 - [ ] Squad HUD (member count, health)
 - [ ] Sound detection
 
+Look there!-->soldiers will look there to check for enemy
+    detect enemy within the ping's radius, instant lock if any found near and is visible
+Soldier's vision should follow the player owner, maybe offset slightly to establish a good scan area
+Debug rendering: Render lines indicating the soldier's sight to the enemy, and maybe render numbers like that acquisition score, to debug and adjust the fair target acquisition system
+
+Detailed planning UI: For making decision like scout mode vs battle mode (engagement rule)
+
+
 ### Phase 5: Respawn System (Week 9)
 - [ ] Death event handler
 - [ ] Squadmate selection UI
