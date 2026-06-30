@@ -1,367 +1,299 @@
-# Cover System Architecture - Complete Flow
+# Cover System Architecture - Refactored (Single-Responsibility)
 
 ## Overview
 
-The cover system has **two separate systems** that sometimes conflict:
+The cover system now uses a **single-responsibility architecture** where:
+- **CoverBehaviorManager** = passive data holder (state, cover points, suppression)
+- **CoverTacticalGoal** = behavior owner (state machine, decisions, movement)
+- **CoverFinder/CoverScorer** = cover math (searching, scoring)
+- **CoverReservationManager** = multiplayer/squad coordination
 
-1. **CoverBehaviorManager** (State Machine) - Runs every tick in `SoldierEntity.tick()`
-2. **SeekCoverGoal** (AI Goal) - Runs via Minecraft's goal selector
+This eliminates the race condition between dual state management that caused oscillation.
 
 ---
 
 ## Component Breakdown
 
-### 1. CoverBehaviorManager (State Machine)
+### 1. CoverBehaviorManager (Passive Data Holder)
 
 **Location:** `CoverBehaviorManager.java`
 
-**Purpose:** Tracks cover state and makes decisions about cover transitions.
+**Purpose:** Stores state and provides getters/setters. NO autonomous logic.
+
+**Data:**
+```
+CoverState state            - Current state
+CoverPoint currentCover     - Cover currently occupied
+CoverPoint targetCover      - Cover being navigated to
+CoverPoint lastCover        - Recently abandoned cover (hysteresis)
+long coverEntryTime         - Time entered cover
+long seekingStartTime       - Time started seeking
+SuppressionTracker          - Suppression data
+ThreatDirectionCalculator   - Threat analysis helper
+```
 
 **States:**
 ```
-NO_COVER → SEEKING_COVER → IN_COVER → SUPPRESSED_IN_COVER
-                ↑              ↓
-                └──────────────┘
-```
-
-**Tick Flow (runs every game tick via `SoldierEntity.tick()`):**
-
-```
-tick(soldier)
-├── suppressionTracker.tick(inCover)
-└── switch (state)
-    ├── NO_COVER → handleNoCover()
-    │   └── if shouldSeekCover() → transitionTo(SEEKING_COVER)
-    │
-    ├── SEEKING_COVER → handleSeekingCover()
-    │   ├── if seekingTime > 10s → transitionTo(NO_COVER)
-    │   └── if currentCover != null && distance < 2.0 → transitionTo(IN_COVER)
-    │
-    ├── IN_COVER → handleInCover()
-    │   ├── if FOLLOW mode && !suppressed → clearCover() → NO_COVER
-    │   ├── if pinned → transitionTo(SUPPRESSED_IN_COVER)
-    │   └── if !isCoverStillValid() → transitionTo(SEEKING_COVER) ⚠️
-    │
-    └── SUPPRESSED_IN_COVER → handleSuppressed()
-        └── if !pinned && canPeek() → transitionTo(IN_COVER)
+NO_COVER           - Default, exposed
+SEEKING_COVER      - Moving to cover (no currentCover)
+IN_COVER           - Stationary, can peek/shoot
+SUPPRESSED_IN_COVER - Pinned, cannot peek
+REPOSITIONING      - Moving to better cover (has currentCover)
 ```
 
 **Key Methods:**
+| Method | Returns | Purpose |
+|--------|---------|---------|
+| `getState()` | CoverState | Query current state |
+| `setState()` | void | Set state (called by Goal) |
+| `getCurrentCover()` | CoverPoint | Query occupied cover |
+| `setCurrentCover()` | void | Set cover (called by Goal) |
+| `getTargetCover()` | CoverPoint | Query navigation target |
+| `setTargetCover()` | void | Set target (called by Goal) |
+| `getLastCover()` | CoverPoint | Query abandoned cover (hysteresis) |
+| `clearCover()` | void | Clear cover and set NO_COVER |
+| `tickSuppression()` | void | Tick suppression tracker only |
 
-| Method | Returns | Called By |
-|--------|---------|-----------|
-| `shouldSeekCover(soldier)` | boolean if soldier should seek cover | `handleNoCover()`, `shouldGoalSeekCover()` |
-| `shouldGoalSeekCover(soldier)` | boolean if SeekCoverGoal should run | `SeekCoverGoal.canUse()` |
-| `isCoverStillValid(soldier)` | boolean if current cover is still valid | `handleInCover()`, `SeekCoverGoal.canUse()` |
-| `setCover(cover)` | void | `SeekCoverGoal.onCoverReached()` |
-| `clearCover()` | void | `handleInCover()` (FOLLOW mode) |
-| `transitionTo(newState)` | void | Internal state transitions |
-
----
-
-### 2. SeekCoverGoal (AI Goal)
-
-**Location:** `SeekCoverGoal.java`
-
-**Purpose:** Actually moves the soldier to cover using Minecraft's pathfinding.
-
-**Goal Priority:** 2 (higher than combat at 4, lower than ping movement at 1)
-
-**Goal Flags:** `MOVE`, `LOOK`
-
-**Flow:**
-
-```
-canUse() → Can the goal start?
-├── cooldown > 0? → false
-├── not alive? → false
-├── FOLLOW mode && !suppressed && health >= 30%? → false
-├── targetCover != null && navigation not done? → false
-├── isInCover()?
-│   ├── timeInCover < 3s? → false
-│   └── isCoverStillValid()? → false
-└── shouldGoalSeekCover()? → true
-
-start() → Find and navigate to cover
-├── stuckTicks = 0
-└── findAndMoveToCover()
-    ├── Get threats from getThreats() (just current target)
-    ├── analyzeThreats() → threat direction
-    ├── findBestCover() → search radius 12
-    ├── Hysteresis check (new > current * 1.25?)
-    ├── Reserve cover
-    └── navigation.moveTo()
-
-tick() → Monitor progress
-├── distance < 1.5 blocks?
-│   └── if !isInCover() → onCoverReached()
-│       └── setCover(targetCover)
-└── navigation stuck > 60 ticks?
-    └── findAndMoveToCover() again
-
-stop() → Cleanup
-├── Release cover reservation if not in cover
-└── cooldown = 40 ticks
-```
+**NO:**
+- `tick()` method (removed)
+- `handleNoCover()`, `handleInCover()` (removed)
+- `transitionTo()` (removed)
+- Autonomous state decisions
 
 ---
 
-### 3. Goal Priority & Conflicts
+### 2. CoverTacticalGoal (Behavior Owner)
 
-**Goal Registration Order (SoldierEntity:136-148):**
+**Location:** `CoverTacticalGoal.java` (renamed from SeekCoverGoal)
+
+**Purpose:** Owns the full cover lifecycle state machine and all behavior decisions.
+
+**Goal Priority:** 2
+
+**Goal Flags:** Dynamic (MOVE+LOOK when navigating, LOOK only when in cover)
+
+**State Machine (owned by Goal):**
 ```
-Priority 0: FloatGoal (swimming)
-Priority 1: SoldierMoveToPingGoal
-Priority 2: SeekCoverGoal ⚠️
-Priority 3: SoldierFollowOwnerGoal / SoldierHoldPositionGoal
-Priority 4: SoldierCombatGoal ⚠️
-Priority 5: SoldierStrollGoal
-Priority 6: LookAtPlayerGoal
-Priority 7: RandomLookAroundGoal
-```
+canUse() checks:
+├── NO_COVER → shouldSeekCover() → start SEEKING_COVER
+├── SEEKING_COVER → always true (goal running)
+├── IN_COVER → shouldContinueInCover() → may exit or stay
+├── SUPPRESSED_IN_COVER → always true
+└── REPOSITIONING → always true
 
-**Conflict Analysis:**
-
-| Goal | Flags | Conflict with SeekCover? |
-|------|-------|-------------------------|
-| SeekCoverGoal | MOVE, LOOK | - |
-| SoldierFollowOwnerGoal | MOVE | **YES** - Both use MOVE |
-| SoldierHoldPositionGoal | MOVE | **YES** - Both use MOVE |
-| SoldierCombatGoal | LOOK | Partial - Combat may move soldier to aim |
-
-**Minecraft Goal System Behavior:**
-- Only ONE goal with `MOVE` flag can run at a time
-- Higher priority goal preempts lower priority
-- But `SeekCoverGoal` (priority 2) can run alongside `SoldierCombatGoal` (priority 4) because combat only has `LOOK` flag
-
----
-
-## The Core Problem
-
-### Issue 1: Dual State Management
-
-**CoverBehaviorManager maintains state independently of SeekCoverGoal:**
-
-1. **CoverBehaviorManager.tick()** runs every tick and decides state transitions
-2. **SeekCoverGoal** only runs when the goal selector picks it
-
-**This creates a race condition:**
-
-```
-Tick 1:
-  CoverBehaviorManager: IN_COVER → isCoverStillValid() returns false → SEEKING_COVER
-  SeekCoverGoal: Not running yet
-
-Tick 2:
-  CoverBehaviorManager: SEEKING_COVER → currentCover is null
-  SeekCoverGoal: canUse() returns true → start() → findAndMoveToCover()
-
-Tick 3:
-  CoverBehaviorManager: SEEKING_COVER → currentCover still null
-  SeekCoverGoal: tick() → navigating to cover
-
-Tick 4:
-  SeekCoverGoal: tick() → reached cover → onCoverReached() → setCover()
-  CoverBehaviorManager: Still SEEKING_COVER
-
-Tick 5:
-  CoverBehaviorManager: handleSeekingCover() → currentCover != null → distance < 2.0 → IN_COVER
-
-Tick 6:
-  CoverBehaviorManager: handleInCover() → isCoverStillValid() → false → SEEKING_COVER
-  (Loop repeats)
+tick() transitions:
+├── SEEKING_COVER:
+│   ├── reached cover? → setCurrentCover → IN_COVER
+│   ├── stuck? → findAndMoveToCover
+│   └── timeout? → NO_COVER
+│
+├── IN_COVER:
+│   ├── suppressed? → SUPPRESSED_IN_COVER
+│   ├── cover invalid? → startRepositioning
+│   ├── better cover? (hysteresis) → startRepositioning
+│   ├── FOLLOW + not suppressed + player far? → clearCover → NO_COVER
+│   └── can peek? → set MOVE+LOOK flags temporarily
+│
+├── SUPPRESSED_IN_COVER:
+│   ├── not pinned + canPeek? → IN_COVER
+│   └── FOLLOW + not suppressed? → clearCover
+│
+└── REPOSITIONING:
+    ├── reached new cover? → setCurrentCover → IN_COVER
+    └── stuck? → back to IN_COVER
 ```
 
-### Issue 2: isCoverStillValid() is Too Strict
+**Key Methods:**
+| Method | Purpose |
+|--------|---------|
+| `canUse()` | Cheap check: needs cover or already in cover |
+| `canContinueToUse()` | True while SEEKING/IN_COVER/SUPPRESSED/REPOSITIONING |
+| `start()` | Find and navigate to cover |
+| `tick()` | Run state machine, manage flags |
+| `stop()` | Cleanup reservations |
+| `shouldSeekCover()` | Decision: should seek cover? |
+| `shouldExitCoverForFollow()` | Decision: should leave cover to follow player? |
+| `canPeekAndShoot()` | Decision: can expose to shoot? |
+| `isCoverStillValid()` | Decision: is current cover still good? |
+| `evaluateCoverState()` | Periodic cover quality check |
+| `startRepositioning()` | Move to better cover |
+| `findAndMoveToCover()` | Cover search and navigation |
 
+**Dynamic Flag Management:**
 ```java
-public boolean isCoverStillValid(SoldierEntity soldier) {
-    if (currentCover == null) return false;
-    
-    double distance = soldier.position().distanceTo(currentCover.getPosition().getCenter());
-    if (distance > MAX_DISTANCE_TO_COVER * 1.5) {  // 2.0 * 1.5 = 3.0 blocks
-        return false;  // ⚠️ Very strict!
+tick() {
+    if (state == IN_COVER && !canPeekAndShoot()) {
+        setFlags(EnumSet.of(Flag.LOOK)); // No MOVE, allow follow goal
+    } else if (state == SEEKING_COVER || wantsToPeek) {
+        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
-    
-    // FOLLOW mode check...
-    return true;
 }
 ```
 
-**The problem:** 3 blocks is very strict. If the soldier:
-- Turns to aim at a target
-- Takes a step while shooting
-- Moves slightly for pathfinding
+---
 
-...they can exceed 3 blocks from cover center, triggering a re-seek.
+### 3. SoldierCombatGoal (Cover-Aware)
 
-### Issue 3: transitionTo(SEEKING_COVER) Clears currentCover
-
+**Changes:**
 ```java
-private void transitionTo(CoverState newState) {
-    if (newState == CoverState.SEEKING_COVER) {
-        this.seekingStartTime = System.currentTimeMillis();
-        this.coverEntryTime = 0;
-        if (currentCover != null) {
-            CoverReservationManager.release(currentCover.getPosition(), null);
+tickGunCombat() {
+    CoverBehaviorManager coverManager = soldier.getCoverBehaviorManager();
+    
+    if (coverManager.isInCover()) {
+        if (coverManager.isPinned()) {
+            // Stay down, don't shoot
+            GunIntegration.aim(soldier, false);
+            GunIntegration.crawl(soldier, true);
+            return;
         }
-        this.currentCover = null;  // ⚠️ Cleared!
+        
+        if (!coverManager.getSuppressionTracker().canPeek()) {
+            // Can't peek yet
+            return;
+        }
+        
+        // Pop up to shoot
+        GunIntegration.crawl(soldier, false);
+    }
+    
+    // Normal shooting logic...
+    
+    if (shotSuccess && coverManager.isInCover()) {
+        coverManager.onPeekShot(); // Reset peek timer
     }
 }
 ```
 
-**This breaks hysteresis:** When `SeekCoverGoal.findAndMoveToCover()` runs, it checks `getCoverManager().getCurrentCover()` for hysteresis. But `currentCover` is now `null`, so the soldier seeks the same cover again!
+---
+
+## Key Constants (Updated)
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `COVER_REACHED_DISTANCE` | 1.5D | Distance to consider reached |
+| `COVER_VALID_DISTANCE` | 5.0D | Still considered in cover |
+| `COMBAT_COVER_VALID_DISTANCE` | 6.0D | In cover while shooting |
+| `COVER_ABANDON_DISTANCE` | 8.0D | Definitely left cover |
+| `MIN_COVER_DWELL_TIME_MS` | 4000 | Minimum time in cover |
+| `MIN_SUPPRESSED_DWELL_TIME_MS` | 6000 | Minimum time when suppressed |
+| `MIN_PEEK_INTERVAL_MS` | 2000 | Time between peeks |
+| `REEVALUATE_INTERVAL_TICKS` | 60 | Periodic cover check (3s) |
+| `HYSTERESIS_THRESHOLD` | 0.35f | 35% better to switch cover |
+| `MAX_SEEKING_TIME_MS` | 10000 | Timeout for seeking |
+| `LOW_HEALTH_THRESHOLD` | 0.3f | Health % to seek cover |
+| `FOLLOW_MAX_COMBAT_DISTANCE` | 20.0D | Max distance during combat |
+| `FOLLOW_COVER_SEARCH_RADIUS` | 15.0D | Prefer cover near player |
+| `FOLLOW_REGROUP_DISTANCE` | 10.0D | Exit cover if player this far |
 
 ---
 
-## Data Flow Diagram
+## Hysteresis Implementation
 
+**Problem (Before):**
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SoldierEntity.tick()                               │
-│                                                                              │
-│  1. super.tick() ──────────────────────────────────────────────────────────►│
-│  2. coverBehaviorManager.tick(this) ───────────────────────────────────────►│
-│                                                                              │
-│     ┌─────────────────────────────────────────────────────────────────────┐  │
-│     │              CoverBehaviorManager.tick()                            │  │
-│     │                                                                     │  │
-│     │  handleInCover()                                                    │  │
-│     │  ├── isCoverStillValid()?                                          │  │
-│     │  │   └── distance > 3.0? → return false                            │  │
-│     │  └── false? → transitionTo(SEEKING_COVER)                          │  │
-│     │      └── currentCover = null ⚠️                                    │  │
-│     └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  3. Goal Selector (Minecraft) picks goals                                   │
-│                                                                              │
-│     ┌─────────────────────────────────────────────────────────────────────┐  │
-│     │              SeekCoverGoal (Priority 2)                             │  │
-│     │                                                                     │  │
-│     │  canUse()?                                                          │  │
-│     │  ├── FOLLOW mode && !suppressed? → false                           │  │
-│     │  └── shouldGoalSeekCover()?                                         │  │
-│     │      └── state == SEEKING_COVER? → true                            │  │
-│     │                                                                     │  │
-│     │  start()                                                            │  │
-│     │  └── findAndMoveToCover()                                           │  │
-│     │      └── getCurrentCover() → null (was cleared!) ⚠️                 │  │
-│     │      └── No hysteresis, finds same cover again                      │  │
-│     └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  4. SeekCoverGoal.tick() runs                                               │
-│     └── navigation.moveTo() moves soldier                                   │
-│     └── Soldier moves AWAY from cover to navigate around obstacles!         │
-│                                                                              │
-│  5. Next tick: CoverBehaviorManager.tick()                                  │
-│     └── handleInCover() (if soldier is near cover)                          │
-│         └── isCoverStillValid() → distance changed → false again!           │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+IN_COVER → isCoverStillValid() fails
+         → transitionTo(SEEKING_COVER) clears currentCover
+         → findAndMoveToCover() has no currentCover for hysteresis
+         → finds same cover again
+         → oscillates
 ```
 
----
+**Solution (Now):**
+```java
+CoverPoint currentCover    // Occupied cover
+CoverPoint targetCover     // Navigation target
+CoverPoint lastCover       // Recently abandoned
 
-## Current Behavior Summary
+// In findAndMoveToCover():
+if (lastCover != null && cover.getPosition().equals(lastCover.getPosition())) {
+    // Skip recently abandoned cover
+    return;
+}
 
-**What happens:**
-1. Soldier reaches cover
-2. `setCover()` is called, state becomes IN_COVER (after next tick's handleSeekingCover)
-3. `handleInCover()` checks `isCoverStillValid()` 
-4. If soldier moved even slightly (turned, stepped), distance > 3.0 → returns false
-5. `transitionTo(SEEKING_COVER)` clears `currentCover`
-6. `SeekCoverGoal.canUse()` returns true
-7. `findAndMoveToCover()` has no `currentCover` for hysteresis
-8. Soldier finds same cover again
-9. Repeat
-
-**Why soldier seems to "not find cover":**
-- The soldier IS finding cover
-- But they keep re-seeking the same cover because:
-  1. `isCoverStillValid()` fails due to distance
-  2. Hysteresis is broken because `currentCover` is cleared
-
-**Why soldier "moves between 2 covers":**
-- If there are two equally good covers nearby
-- And the soldier oscillates between them because:
-  1. Reaches cover A
-  2. Moves slightly, `isCoverStillValid()` fails
-  3. Seeks again, finds cover B (slightly better now)
-  4. Reaches cover B
-  5. Moves slightly, `isCoverStillValid()` fails
-  6. Seeks again, finds cover A (slightly better now)
-  7. Repeat
+// In startRepositioning():
+// currentCover is NOT cleared - preserved for hysteresis
+coverManager.setTargetCover(newCover);
+coverManager.setState(REPOSITIONING);
+```
 
 ---
 
-## Design Questions
+## FOLLOW Mode Cover Behavior
 
-1. **Should the state machine (CoverBehaviorManager) and the goal (SeekCoverGoal) be merged?**
-   - Currently they're separate, which causes synchronization issues
-   - Option: Make CoverBehaviorManager only track state, let SeekCoverGoal handle all decisions
+```
+FOLLOW + NO_COMBAT:     Don't seek cover, stay close to player
+FOLLOW + HAS_TARGET:    Take nearby cover (within 15 blocks of player)
+FOLLOW + SUPPRESSED:    Take ANY cover, ignore player distance
 
-2. **What's the minimum time a soldier should stay in cover?**
-   - Currently: `MIN_COVER_DWELL_TIME_MS = 3000` (3 seconds)
-   - But `isCoverStillValid()` can override this by returning false
+FOLLOW + IN_COVER + NOT_SUPPRESSED:
+├── Player > 10 blocks away → Exit cover, follow player
+├── Player < 10 blocks away → Stay in cover, engage target
+└── No target → Exit cover, follow player
 
-3. **What's the correct distance threshold?**
-   - Currently: 3.0 blocks (2.0 * 1.5)
-   - Is this too strict? Should it be 4.0? 5.0?
-
-4. **Should soldiers in combat have different cover behavior?**
-   - Currently: No distinction
-   - Option: Allow more distance tolerance when actively shooting
-
-5. **Should `currentCover` be preserved during SEEKING_COVER?**
-   - Currently: Cleared on transition
-   - This breaks hysteresis
-   - Option: Keep `currentCover` but add a `seekingNewCover` flag
+FOLLOW + IN_COVER + SUPPRESSED:
+└── Stay in cover, ignore player distance
+```
 
 ---
 
-## Proposed Simplification
+## Layered Distance Thresholds
 
-### Option A: Single-Responsibility Architecture
+```
+≤ 1.5 blocks: COVER_REACHED → transition to IN_COVER
+≤ 5.0 blocks: COVER_VALID → still in cover (normal)
+≤ 6.0 blocks: COMBAT_COVER_VALID → still in cover (shooting)
+> 8.0 blocks: COVER_ABANDON → definitely left cover
 
-**CoverBehaviorManager:** Only tracks state and provides queries
-- No state transitions except via explicit calls
-- No `handleInCover()` logic that triggers transitions
-- Just: `getState()`, `getCurrentCover()`, `setCover()`, `clearCover()`
+If 5-8 blocks AND timeInCover > MIN_DWELL_TIME → reposition
+If > 8 blocks → abandon cover immediately
+```
 
-**SeekCoverGoal:** Handles all cover decision logic
-- `canUse()` decides when to seek cover
-- `tick()` decides when to leave cover
-- Owns all the logic currently in `handleInCover()`
-
-**Benefit:** No race conditions, single source of truth
-
-### Option B: Keep Dual System, Fix Synchronization
-
-**Fixes:**
-1. Don't clear `currentCover` in `transitionTo(SEEKING_COVER)`
-2. Add `MIN_COVER_DWELL_TIME` check in `isCoverStillValid()` - don't invalidate until 3s passed
-3. Increase distance threshold from 3.0 to 4.0 or 5.0
-4. Add combat-aware distance tolerance (more lenient when shooting)
-
-**Benefit:** Less invasive changes, keeps existing structure
+This prevents tiny combat/pathfinding movement from invalidating state.
 
 ---
 
-## Constants Reference
+## Data Flow (Single Source of Truth)
 
-| Constant | Value | Location | Purpose |
-|----------|-------|----------|---------|
-| `MAX_DISTANCE_TO_COVER` | 2.0 | CoverBehaviorManager | Distance to consider "at cover" |
-| `MIN_COVER_TIME_MS` | 2500 | CoverBehaviorManager | Minimum time in cover |
-| `MIN_PEEK_INTERVAL_MS` | 1500 | CoverBehaviorManager | Time between peek shots |
-| `MAX_SEEKING_TIME_MS` | 10000 | CoverBehaviorManager | Timeout for seeking cover |
-| `LOW_HEALTH_THRESHOLD` | 0.3f | CoverBehaviorManager | Health % to seek cover |
-| `MIN_COVER_DWELL_TIME_MS` | 3000 | SeekCoverGoal | Time before re-evaluating |
-| `COVER_REACHED_THRESHOLD` | 1.5 | SeekCoverGoal | Distance to consider reached |
-| `SEARCH_RADIUS` | 12 | SeekCoverGoal | Radius to search for cover |
-| `HYSTERESIS_THRESHOLD` | 0.25 | SeekCoverGoal | Quality improvement needed to switch |
-| `MAX_STUCK_TICKS` | 60 | SeekCoverGoal | Ticks before re-seeking (3s) |
-| `COOLDOWN_TICKS` | 40 | SeekCoverGoal | Ticks between seeks (2s) |
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    SoldierEntity                              │
+│                                                              │
+│  tick() {                                                    │
+│      super.tick();                                           │
+│      // NO coverBehaviorManager.tick() call                  │
+│  }                                                           │
+│                                                              │
+│  Goal Selector picks CoverTacticalGoal                       │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              CoverTacticalGoal.tick()                  │ │
+│  │                                                        │ │
+│  │  coverManager.tickSuppression(inCover)                │ │
+│  │                                                        │ │
+│  │  switch (coverManager.getState()) {                   │ │
+│  │      SEEKING_COVER → navigate, check reached          │ │
+│  │      IN_COVER → evaluate, manage flags                │ │
+│  │      SUPPRESSED → manage suppression decay            │ │
+│  │      REPOSITIONING → navigate to new cover            │ │
+│  │  }                                                    │ │
+│  │                                                        │ │
+│  │  coverManager.setState(newState) // Goal decides       │ │
+│  │  coverManager.setCurrentCover(cover) // Goal decides   │ │
+│  │  coverManager.setTargetCover(cover) // Goal decides    │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  SoldierCombatGoal checks:                                   │
+│      coverManager.isInCover() → modify shooting             │
+│      coverManager.isPinned() → don't shoot                  │
+│      coverManager.onPeekShot() → after successful shot      │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Key Principle:**
+- CoverBehaviorManager = MEMORY (passive)
+- CoverTacticalGoal = BEHAVIOR (active)
+- Single decision point = no race conditions
 
 ---
 
@@ -374,3 +306,26 @@ private void transitionTo(CoverState newState) {
 | `/stevesarmy_cover soldiers` | Toggle soldier cover visualization |
 | `/stevesarmy_cover threats` | Show threat direction analysis |
 | `/stevesarmy_cover reservations` | Show cover reservations |
+
+---
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `CoverBehaviorManager.java` | Refactored to passive data holder |
+| `CoverTacticalGoal.java` | New file, owns full state machine |
+| `SeekCoverGoal.java` | Deleted (replaced by CoverTacticalGoal) |
+| `SoldierEntity.java` | Updated goal registration, removed tick() call |
+| `SoldierCombatGoal.java` | Made cover-aware (check state before shooting) |
+| `CoverDebugCommand.java` | Updated references to CoverTacticalGoal |
+
+---
+
+## Future Improvements
+
+1. **Bounding Overwatch**: One soldier moves while others cover
+2. **Cover-to-cover movement**: Planned tactical movement
+3. **Peek direction optimization**: Face threat direction while in cover
+4. **Suppression per-threat**: Track which enemy is suppressing most
+5. **Cover destruction detection**: Detect when cover block is destroyed
