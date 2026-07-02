@@ -47,7 +47,62 @@ Score = (PrimaryProtection * 0.40) +
 - **DistanceToSoldier**: Closer to soldier = higher score (inverse distance)
 - **FiringPositionQuality**: Can shoot from cover = 1.0, else 0.5
 
-## Implementation Phases
+## Implementation Status
+
+**All phases are implemented.** See `steves_army_cover_architecture.md` for current architecture.
+
+### Key Implementation Notes
+
+**Actual scoring weights (CoverFinder.java):**
+- PRIMARY_PROTECTION_WEIGHT = 0.30 (not 0.40)
+- FLANKING_PROTECTION_WEIGHT = 0.20 (not 0.30)
+- DISTANCE_WEIGHT = 0.10 (not 0.15)
+- FIRING_QUALITY_WEIGHT = 0.25 (not 0.15)
+- PEEK_ANGLE_WEIGHT = 0.15 (added)
+- FIGHTABILITY_BONUS = 0.20 (added, not in original design)
+
+**Key Bug Fixes Discovered During Implementation:**
+
+1. **Walking while crawling** — `clearCover()` must call `GunIntegration.crawl(false)` because all cover exits (SEEKING, REPOSITIONING, FOLLOW exit, NO_COVER timeout) go through `clearCover()`. Without this, the CRAWLING flag persists and the soldier walks with the crawling pose.
+
+2. **Frozen at peek position when suppressed** — The state transition `IN_COVER → SUPPRESSED_IN_COVER` skips `tickDuckingBack()`. `tickSuppressedInCover()` must call `tickDuckingBack()` when peek state is `DUCKING_BACK` to process the velocity slide back to cover.
+
+### Updated State Machine Flow
+
+```
+NO_COVER ──────────────────────────────────────► SEEKING_COVER
+    │                                              (find cover, pathfind)
+    │  [suppressed, low health, hold mode,         │
+    │   being flanked]                             │
+    │                              [reached cover] │
+    │                                              ▼
+    │                                         IN_COVER
+    │                                    [tickPeekState]
+    │                              ┌──────────────────┐
+    │                              │ HIDING → EXPOSED │
+    │                              │   → DUCKING_BACK │
+    │                              └──────────────────┘
+    │                              [suppressed]    │
+    │  [suppression clears]           ↓            ▼
+    │  ┌──────────────────────── IN_COVER ← SUPPRESSED_IN_COVER
+    │  │                                          │
+    │  │                              [tickDuckingBack() while DUCKING_BACK]
+    │  │
+    │◄─┘
+    [cover invalid, threat moved, follow mode]
+    [clearCover() → GunIntegration.crawl(false)]
+```
+
+### Additional States Added
+- **REPOSITIONING**: Moving to better cover while maintaining currentCover for hysteresis (prevents oscillation)
+- **NON_PEEKABLE**: Cover position with no valid LOS angles; soldier repositions after ~8s (160 ticks)
+
+### Peek System (Not in Original Design)
+
+A 3-state sub-machine within IN_COVER:
+1. **HIDING** → check LOS, cooldown, expose if valid
+2. **EXPOSED** → soldier shoots, auto-ducks after 1500ms, early duck on target death/LOS loss
+3. **DUCKING_BACK** → half-cover: instant pose switch; full-cover: velocity slide back to cover position
 
 ### Phase 1: Core Infrastructure
 
