@@ -13,6 +13,18 @@ $env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
 - Must set `JAVA_HOME` to JDK 17 every session
 - Build jar at `steves_army/build/libs/steves_army-0.1.0-alpha.jar`
 - Copy to test instance: `Copy-Item ...\build\libs\steves_army-0.1.0-alpha.jar C:\Users\lauya\curseforge\minecraft\Instances\Test\mods\ -Force`
+- Check log at `C:\Users\lauya\curseforge\minecraft\Instances\Test\logs` or `C:\Modding\Steve's_Army_parent\Debug` (user uploaded)
+
+## Coding guidelines
+- Do not always choose the easiest or quickest fix. Prioritize correctness and long-term stability.
+- Perform deeper investigation when debugging issues. Do not assume the first explanation is the root cause.
+- Verify and confirm root causes before applying changes. Use evidence from logs, code behavior, or system structure.
+- Consider broader system impact before implementing changes. Avoid local fixes that may introduce architectural inconsistency.
+- Prefer systematic solutions over patchwork fixes.
+- When multiple solutions exist, evaluate trade-offs (performance, maintainability, scalability) before deciding.
+- If uncertainty exists, explore multiple hypotheses instead of committing to a single assumption.
+- Do reserach online and compare/explore existing solution if needed
+- Do not blindly follow user's instruction. When you think the user's instruction is problematic, or there are better alternative, discuss with the user about it first
 
 ## Architecture
 
