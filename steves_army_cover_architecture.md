@@ -2,13 +2,12 @@
 
 ## Overview
 
-The cover system now uses a **single-responsibility architecture** where:
-- **CoverBehaviorManager** = passive data holder (state, cover points, suppression)
-- **CoverTacticalGoal** = behavior owner (state machine, decisions, movement)
+The cover system uses a **single-responsibility architecture** where:
+- **CoverBehaviorManager** = passive data holder (state, cover points, suppression, peek state)
+- **CoverTacticalGoal** = behavior owner (state machine, decisions, movement orchestration)
+- **CoverPositionController** = custom MoveControl (direct velocity for positioning/peeking/returning)
 - **CoverFinder/CoverScorer** = cover math (searching, scoring)
 - **CoverReservationManager** = multiplayer/squad coordination
-
-This eliminates the race condition between dual state management that caused oscillation.
 
 ---
 
@@ -16,259 +15,251 @@ This eliminates the race condition between dual state management that caused osc
 
 ### 1. CoverBehaviorManager (Passive Data Holder)
 
-**Location:** `CoverBehaviorManager.java`
+**Location:** `combat/cover/CoverBehaviorManager.java`
 
 **Purpose:** Stores state and provides getters/setters. NO autonomous logic.
 
 **Data:**
-```
-CoverState state            - Current state
-CoverPoint currentCover     - Cover currently occupied
-CoverPoint targetCover      - Cover being navigated to
-CoverPoint lastCover        - Recently abandoned cover (hysteresis)
-long coverEntryTime         - Time entered cover
-long seekingStartTime       - Time started seeking
-SuppressionTracker          - Suppression data
-ThreatDirectionCalculator   - Threat analysis helper
-```
+- `CoverState state` — Current cover state (NO_COVER, SEEKING_COVER, IN_COVER, SUPPRESSED_IN_COVER, REPOSITIONING)
+- `CoverPoint currentCover` — Cover currently occupied
+- `CoverPoint targetCover` — Cover being navigated to
+- `CoverPoint lastCover` — Recently abandoned cover (hysteresis)
+- `long coverEntryTime` — Time entered cover
+- `long seekingStartTime` — Time started seeking
+- `SuppressionTracker suppressionTracker` — Suppression data
+- `PeekState peekState` — HIDING, EXPOSED, DUCKING_BACK
+- `BlockPos peekPosition` — Target block for full-cover side-step peek
+- `long peekStartTime` — Time entered current peek state
+- `long lastPeekEndTime` — Time last peek cycle ended (for cooldown)
+- `boolean nonPeekableCover` — Flag: no valid peek angle exists
+- `Vec3 entryThreatDirection` — Threat direction when cover was entered
+- `int peekCountSameCover` — Peek cycles at same cover (penalty for repositioning)
 
 **States:**
 ```
-NO_COVER           - Default, exposed
-SEEKING_COVER      - Moving to cover (no currentCover)
-IN_COVER           - Stationary, can peek/shoot
-SUPPRESSED_IN_COVER - Pinned, cannot peek
-REPOSITIONING      - Moving to better cover (has currentCover)
+NO_COVER              - Default, exposed
+SEEKING_COVER         - Moving to cover (no currentCover)
+IN_COVER              - Stationary, can peek/shoot
+SUPPRESSED_IN_COVER   - Pinned, cannot peek
+REPOSITIONING         - Moving to better cover (has currentCover)
 ```
 
-**Key Methods:**
-| Method | Returns | Purpose |
-|--------|---------|---------|
-| `getState()` | CoverState | Query current state |
-| `setState()` | void | Set state (called by Goal) |
-| `getCurrentCover()` | CoverPoint | Query occupied cover |
-| `setCurrentCover()` | void | Set cover (called by Goal) |
-| `getTargetCover()` | CoverPoint | Query navigation target |
-| `setTargetCover()` | void | Set target (called by Goal) |
-| `getLastCover()` | CoverPoint | Query abandoned cover (hysteresis) |
-| `clearCover()` | void | Clear cover, set NO_COVER, disable crawl |
-| `tickSuppression()` | void | Tick suppression tracker only |
-
-**NO:**
-- `tick()` method (removed)
-- `handleNoCover()`, `handleInCover()` (removed)
-- `transitionTo()` (removed)
-- Autonomous state decisions
+**Peek States:**
+```
+HIDING       - Behind cover, waiting to peek
+EXPOSED      - Peeking out, can shoot
+DUCKING_BACK - Returning to cover after exposure
+```
 
 ---
 
 ### 2. CoverTacticalGoal (Behavior Owner)
 
-**Location:** `CoverTacticalGoal.java`
+**Location:** `entity/ai/CoverTacticalGoal.java`
 
 **Purpose:** Owns the full cover lifecycle state machine and all behavior decisions.
 
 **Goal Priority:** 2
 
-**Goal Flags:** Dynamic (MOVE+LOOK when navigating, LOOK only when in cover)
+**Goal Flags:** Dynamic (MOVE+LOOK when navigating, none when in cover to avoid vanilla movement interference)
 
-**State Machine (owned by Goal):**
+**State Machine:**
 ```
 canUse() checks:
 ├── NO_COVER → shouldSeekCover() → start SEEKING_COVER
-├── SEEKING_COVER → always true (goal running)
-├── IN_COVER → shouldContinueInCover() → may exit or stay
+├── SEEKING_COVER → always true
+├── IN_COVER → check abandon distance, then true
 ├── SUPPRESSED_IN_COVER → always true
 └── REPOSITIONING → always true
 
 tick() transitions:
 ├── SEEKING_COVER:
-│   ├── reached cover? → setCurrentCover → IN_COVER
-│   ├── stuck? → findAndMoveToCover
-│   └── timeout? → NO_COVER
+│   ├── reached cover (dist < 1.5)? → setCurrentCover → IN_COVER
+│   ├── close (dist < 2.0)? → use POSITIONING (slow walk to exact position)
+│   ├── stuck? → blacklist → find another cover
+│   └── timeout (10s)? → NO_COVER
 │
 ├── IN_COVER:
-│   ├── suppressed? → set DUCKING_BACK, set SUPPRESSED_IN_COVER
-│   ├── cover invalid? → startRepositioning
-│   ├── better cover? (hysteresis) → startRepositioning
-│   ├── FOLLOW + not suppressed + player far? → clearCover → NO_COVER
+│   ├── drifted too far (dist > 8.0)? → clearCover → NO_COVER
+│   ├── pushed out (dist > 2.0, not peeking)? → SEEKING_COVER
+│   ├── not peeking + controller idle? → set POSITIONING to cover center
+│   ├── suppressed? → set DUCKING_BACK → SUPPRESSED_IN_COVER
+│   ├── shouldExitCoverForFollow()? → clearCover
+│   ├── enemy too close (dist < 4.0)? → startRepositioning()
 │   └── tickPeekState() → HIDING/EXPOSED/DUCKING_BACK
 │
 ├── SUPPRESSED_IN_COVER:
-│   ├── if DUCKING_BACK → tickDuckingBack() (velocity slide to cover)
+│   ├── if DUCKING_BACK → tickDuckingBack()
 │   ├── not pinned + canPeek? → IN_COVER
 │   └── FOLLOW + not suppressed? → clearCover
 │
 └── REPOSITIONING:
     ├── reached new cover? → setCurrentCover → IN_COVER
-    └── stuck? → back to IN_COVER
+    └── stuck? → back to IN_COVER or SEEKING_COVER
 ```
 
-**Key Methods:**
-| Method | Purpose |
-|--------|---------|
-| `canUse()` | Cheap check: needs cover or already in cover |
-| `canContinueToUse()` | True while SEEKING/IN_COVER/SUPPRESSED/REPOSITIONING |
-| `start()` | Find and navigate to cover |
-| `tick()` | Run state machine, manage flags |
-| `stop()` | Cleanup reservations |
-| `shouldSeekCover()` | Decision: should seek cover? |
-| `shouldExitCoverForFollow()` | Decision: should leave cover to follow player? |
-| `canPeekAndShoot()` | Decision: can expose to shoot? |
-| `isCoverStillValid()` | Decision: is current cover still good? |
-| `evaluateCoverState()` | Periodic cover quality check |
-| `startRepositioning()` | Move to better cover |
-| `findAndMoveToCover()` | Cover search and navigation |
-| `tickHiding()` | LOS check, expose decision, crawl for half-cover |
-| `tickExposed()` | Exposure timer, LOS check, duck back |
-| `tickDuckingBack()` | Return to cover (velocity slide for full, pose for half) |
-| `tickSuppressedInCover()` | Suppression decay + tickDuckingBack() if DUCKING_BACK |
-| `doCrawlIfHalfCover()` | Enable crawl for half-cover hiding |
+---
 
-**Peek System (3-state, ticked from tickInCover):**
+### 3. CoverPositionController (Custom Movement Control)
+
+**Location:** `entity/ai/CoverPositionController.java`
+
+**Purpose:** Custom `MoveControl` that uses direct `setDeltaMovement()` for precise positioning instead of vanilla pathfinding. Prevents `super.tick()` from fighting custom velocity.
+
+**MovementIntents:**
+```
+NONE        - Idle. Calls super.tick() only if navigation has active path
+NAVIGATING  - Pathfinding. Calls super.tick() only if navigation has active path
+POSITIONING - Direct velocity toward target at speed=min(0.08, dist*0.8). Clears to NONE when within tolerance.
+PEEKING     - Slide to peek position at 0.15 speed. Clears to NONE when within 0.25 blocks.
+RETURNING   - Slide back to cover center at speed=min(0.2, dist*0.6). Clears to NONE when within tolerance.
+```
+
+**Key Design Decision:** `super.tick()` is only called when `!navigation.isDone()` (active path). When idle or in custom movement modes, the controller handles everything itself. This prevents vanilla MoveControl from setting `zza=0` and fighting the custom `setDeltaMovement()`.
+
+---
+
+### 4. Peek System (3-state, ticked from tickInCover)
+
 ```
 tickInCover()
-├── suppressed? → set DUCKING_BACK, set SUPPRESSED_IN_COVER, return
-├── shouldExitCoverForFollow? → clearCover, return
+├── Positioning: if not peeking + controller idle → set POSITIONING to cover center
+├── Suppressed? → set DUCKING_BACK → SUPPRESSED_IN_COVER → return
+├── shouldExitCoverForFollow? → clearCover → return
+├── Enemy proximity (< 4.0 blocks)? → startRepositioning() → return
 └── tickPeekState()
     └── switch peekState:
         ├── HIDING → tickHiding()
-        │   ├── doCrawlIfHalfCover()
-        │   ├── cooldown check
-        │   ├── LOS check (half=standing eye, full=peek position)
-        │   └── clear LOS? → EXPOSED or set nonPeekable
+        │   ├── Non-peekable timer (3s) → reposition
+        │   ├── doCrawlIfHalfCover() (crawl behind half-cover)
+        │   ├── Cooldown check (1s base, +2s if suppressed)
+        │   ├── HALF cover: LOS check from standing eye height
+        │   │   ├── LOS clear? → clearIntent() → EXPOSED + stand up
+        │   │   └── No LOS? → mark nonPeekable
+        │   └── FULL cover: side-step peek
+        │       ├── Re-evaluate targets + peek position (every 1.5s)
+        │       ├── Has valid peekPos + target? → startPeekAt(peekPos) → controller slides
+        │       ├── Already at peekPos (dist < 0.5) + LOS? → setPos → EXPOSED
+        │       └── No valid peek? → mark nonPeekable
         │
-        ├── EXPOSED → tickExposed()
-        │   ├── time exceeded? → DUCKING_BACK + doCrawlIfHalfCover
-        │   ├── target dead? → DUCKING_BACK + doCrawlIfHalfCover
-        │   └── periodic LOS check → early duck if lost
+        ├── EXPOSED → tickExposed(timeInState)
+        │   ├── Time exceeded (1500ms)? → DUCKING_BACK + doCrawlIfHalfCover()
+        │   ├── Target dead + time > min(800ms)? → trySwitchTarget or DUCKING_BACK
+        │   ├── LOS lost + time > 200ms? → trySwitchTarget or DUCKING_BACK
+        │   └── faceTarget()
         │
         └── DUCKING_BACK → tickDuckingBack()
             └── timeToReturnToCover(cover)
-                ├── half: timeInPeekState > 200 ticks → resetPeekState → HIDING
-                └── full: velocity slide to cover position
-                    ├── close enough? → setPos + resetPeekState → HIDING
-                    └── far? → setDeltaMovement (velocity slide)
+                ├── HALF: timeInState > 200ms → resetPeekState → HIDING
+                └── FULL: check distance to cover center
+                    ├── dist < 0.5? → resetPeekState + recordPeekCycle → HIDING
+                    └── dist >= 0.5? → set POSITIONING to cover center
 ```
+
+**timeToReturnToCover():** Uses raw `coverPos.getCenter()` (same as `tickInCover()` line 407 positioning target). This is critical — previously used an adjusted target offset by -0.5 in the protected direction, which placed the target farther from the soldier and caused infinite DUCKING_BACK.
 
 ---
 
-### 3. SoldierCombatGoal (Cover-Aware)
+### 5. SoldierCombatGoal (Cover-Aware)
 
-**Changes:**
-```java
-tickGunCombat() {
-    CoverBehaviorManager coverManager = soldier.getCoverBehaviorManager();
-    
-    if (coverManager.isInCover()) {
-        if (coverManager.isPinned()) {
-            // Stay down, don't shoot
-            GunIntegration.aim(soldier, false);
-            GunIntegration.crawl(soldier, true);
-            return;
-        }
-        
-        if (!coverManager.getSuppressionTracker().canPeek()) {
-            // Can't peek yet
-            return;
-        }
-        
-        // Pop up to shoot
-        GunIntegration.crawl(soldier, false);
-    }
-    
-    // Normal shooting logic...
-    
-    if (shotSuccess && coverManager.isInCover()) {
-        coverManager.onPeekShot(); // Reset peek timer
-    }
-}
-```
+**Changes from vanilla combat:**
+- Checks `coverManager.isInCover()` to modify shooting behavior
+- Checks `coverManager.isPinned()` to stay down
+- Only shoots when `peekState == EXPOSED`
+- Sets target via `setTarget()` (called by CoverTacticalGoal during peek)
 
 ---
 
-### 4. CoverType System
+### 6. CoverType System
 
-**Cover Classification:**
+**Classification:**
 ```
-CoverType enum { HALF, FULL, NONE }
-
-HALF Cover: 1-block tall obstacle, soldier crawls behind, pops up to peek
-FULL Cover: 2+ block tall obstacle, soldier stands behind, side-steps to peek
+HALF Cover: 1-block tall obstacle. Soldier crawls behind, pops up to peek.
+FULL Cover: 2+ block tall obstacle. Soldier stands behind, side-steps 1 block to peek.
+CONCEALMENT: No ballistic protection but breaks LOS (e.g. foliage).
 ```
 
 **Detection (CoverFinder.java):**
 - Voxel shape check for solid blocks
 - Classify based on height (1-block = HALF, 2-block = FULL)
-- Score based on: PRIMARY_PROTECTION_WEIGHT (0.30), FLANKING_PROTECTION_WEIGHT (0.20), DISTANCE_WEIGHT (0.10), FIRING_QUALITY_WEIGHT (0.25), PEEK_ANGLE_WEIGHT (0.15), FIGHTABILITY_BONUS (0.20)
+- Score based on weights:
+  - PRIMARY_PROTECTION_WEIGHT = 0.30
+  - FLANKING_PROTECTION_WEIGHT = 0.20
+  - DISTANCE_WEIGHT = 0.10
+  - FIRING_QUALITY_WEIGHT = 0.25
+  - PEEK_ANGLE_WEIGHT = 0.15
+  - FIGHTABILITY_BONUS = 0.20 (added if canShootFrom())
 
 ---
 
-### 5. Crawl System Integration
+### 7. Crawl System Integration
 
-**When crawl is enabled:**
-- `doCrawlIfHalfCover()` in `tickHiding()` and `tickDuckingBack()` for half-cover
-- `clearCover()` always calls `GunIntegration.crawl(soldier, false)` — ensures crawl is disabled on cover exit
-
-**Why clearCover() must disable crawl:**
-Soldier may transition to SEEKING_COVER, REPOSITIONING, or NO_COVER from any state. Without explicit crawl(false) in clearCover(), the CRAWLING flag persists and the soldier walks around with the crawling pose. This is the single exit point for cover, making it the correct place for the fix.
+- `doCrawlIfHalfCover()` called in `tickHiding()` and `tickDuckingBack()` for half-cover
+- `clearCover()` always calls `GunIntegration.crawl(soldier, false)` — single exit point, prevents crawling pose from persisting
 
 ---
 
 ## Key Constants
 
+### CoverTacticalGoal.java
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `COVER_REACHED_DISTANCE` | 1.5D | Distance to consider reached |
-| `COVER_VALID_DISTANCE` | 2.0D | Still considered in cover |
-| `COMBAT_COVER_VALID_DISTANCE` | 6.0D | In cover while shooting |
-| `COVER_ABANDON_DISTANCE` | 8.0D | Definitely left cover |
-| `MIN_COVER_DWELL_TIME_MS` | 4000 | Minimum time in cover |
+| `COVER_REACHED_DISTANCE` | 1.5 | Transition to IN_COVER |
+| `COVER_VALID_DISTANCE` | 2.0 | Still in cover (normal) |
+| `COMBAT_COVER_VALID_DISTANCE` | 6.0 | Still in cover (shooting) |
+| `COVER_ABANDON_DISTANCE` | 8.0 | Definitely left cover |
+| `MIN_COVER_DWELL_TIME_MS` | 4000 | Minimum time before reposition allowed |
 | `MIN_SUPPRESSED_DWELL_TIME_MS` | 6000 | Minimum time when suppressed |
 | `MIN_PEEK_INTERVAL_MS` | 2000 | Time between peeks |
-| `REEVALUATE_INTERVAL_TICKS` | 60 | Periodic cover check (3s) |
-| `HYSTERESIS_THRESHOLD` | 0.35f | 35% better to switch cover |
-| `MAX_SEEKING_TIME_MS` | 10000 | Timeout for seeking |
-| `LOW_HEALTH_THRESHOLD` | 0.3f | Health % to seek cover |
-| `FOLLOW_MAX_COMBAT_DISTANCE` | 20.0D | Max distance during combat |
-| `FOLLOW_COVER_SEARCH_RADIUS` | 15.0D | Prefer cover near player |
-| `FOLLOW_REGROUP_DISTANCE` | 10.0D | Exit cover if player this far |
-| `EXPOSURE_TIME_MS` | 1500 | Max exposure time during peek |
-| `MIN_EXPOSURE_TIME_MS` | 800 | Min exposure before early duck |
-| `DUCK_COOLDOWN_MS` | 1000 | Time between peeks |
-| `SUPPRESSED_HIDE_EXTRA_MS` | 2000 | Extra hide when suppressed |
-| `FULL_COVER_PEEK_SPEED` | 0.15 | Velocity slide speed (blocks/tick) |
-| `PEEK_POSITION_REACHED_DISTANCE` | 0.3 | Distance to consider peek pos reached |
+| `REEVALUATE_INTERVAL_TICKS` | 60 | Periodic cover quality check (~3s) |
+| `HYSTERESIS_THRESHOLD` | 0.35 | 35% better to switch cover |
+| `MAX_SEEKING_TIME_MS` | 10000 | Seeking timeout |
+| `LOW_HEALTH_THRESHOLD` | 0.3 | Health % to seek cover |
+| `FOLLOW_COVER_SEARCH_RADIUS` | 15.0 | Prefer cover near player |
+| `FOLLOW_REGROUP_DISTANCE` | 10.0 | Exit cover if player this far |
+| `NON_PEEKABLE_REPOSITION_TICKS` | 60 | Wait ~3s before abandoning non-peekable cover |
+| `PEEK_NO_LOS_REPOSITION_TICKS` | 100 | Wait ~5s of no LOS before reposition |
+| `FULL_COVER_PEEK_SPEED` | 0.15 | Velocity slide (blocks/tick) |
+| `PEEK_POSITION_REACHED_DISTANCE` | 0.5 | Tolerance for peek position reached |
+| `PEEK_SEARCH_RADIUS` | 2 | Block radius for full-cover peek candidates |
+| `ENEMY_PROXIMITY_REPOSITION_DISTANCE` | 4.0 | Reposition if enemy this close |
+| `THREAT_ANGLE_REPOSITION_THRESHOLD` | 2.09 rad (120°) | Reposition if threat angle changes this much |
+
+### CoverBehaviorManager.java (Peek)
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `EXPOSURE_TIME_MS` | 1500 | Max exposure during peek |
+| `MIN_EXPOSURE_TIME_MS` | 800 | Minimum exposure before early duck |
+| `DUCK_COOLDOWN_MS` | 1000 | Cooldown between peeks |
+| `SUPPRESSED_HIDE_EXTRA_MS` | 2000 | Extra hide time when suppressed |
+| `PEEK_COUNT_PENALTY_THRESHOLD` | 4 | Peek count before cover quality penalty |
+| `MAX_COVER_PENALTY` | 0.60 | Max penalty for overused cover |
+
+### CoverPositionController.java
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| POSITIONING speed | min(0.08, dist*0.8) | Slow walk to exact position |
+| PEEKING speed | 0.15 | Slide to peek position |
+| RETURNING speed | min(0.2, dist*0.6) | Slide back to cover |
+| PEEKING tolerance | 0.25 | Distance to snap to peek position |
 
 ---
 
 ## Hysteresis Implementation
 
-**Problem (Before):**
 ```
 IN_COVER → isCoverStillValid() fails
-         → transitionTo(SEEKING_COVER) clears currentCover
-         → findAndMoveToCover() has no currentCover for hysteresis
-         → finds same cover again
-         → oscillates
-```
+         → findBetterCover() (not same as current)
+         → setTargetCover(newCover), setState(REPOSITIONING)
+         → currentCover preserved for hysteresis
 
-**Solution (Now):**
-```java
-CoverPoint currentCover    // Occupied cover
-CoverPoint targetCover     // Navigation target
-CoverPoint lastCover       // Recently abandoned
+CoverBehaviorManager:
+  currentCover    // Occupied cover
+  targetCover     // Navigation target  
+  lastCover       // Recently abandoned
 
-// In findAndMoveToCover():
-if (lastCover != null && cover.getPosition().equals(lastCover.getPosition())) {
-    // Skip recently abandoned cover
-    return;
-}
-
-// In startRepositioning():
-// currentCover is NOT cleared - preserved for hysteresis
-coverManager.setTargetCover(newCover);
-coverManager.setState(REPOSITIONING);
+findAndMoveToCover() skips failedCoverPositions (blacklist)
+startRepositioning() preserves currentCover until new cover reached
 ```
 
 ---
@@ -291,81 +282,62 @@ FOLLOW + IN_COVER + SUPPRESSED:
 
 ---
 
-## Layered Distance Thresholds
+## Data Flow
 
 ```
-≤ 1.5 blocks: COVER_REACHED → transition to IN_COVER
-≤ 2.0 blocks: COVER_VALID → still in cover (normal)
-≤ 6.0 blocks: COMBAT_COVER_VALID → still in cover (shooting)
-> 8.0 blocks: COVER_ABANDON → definitely left cover
+SoldierEntity.tick()
+  └── Goal Selector runs CoverTacticalGoal
 
-If 2-8 blocks AND timeInCover > MIN_DWELL_TIME → reposition
-If > 8 blocks → abandon cover immediately
+CoverTacticalGoal.tick()
+  ├── coverManager.tickSuppression(inCover)
+  ├── switch (coverManager.getState()):
+  │   ├── SEEKING_COVER → navigate, check reached/stuck/timeout
+  │   ├── IN_COVER → validate, position, tickPeekState()
+  │   ├── SUPPRESSED_IN_COVER → tickDuckingBack(), check canPeek
+  │   └── REPOSITIONING → navigate to new cover
+  └── coverManager.setState/setCurrentCover/setTargetCover (Goal decides)
+
+CoverPositionController.tick()  (runs after goals, via LivingEntity.aiStep)
+  ├── NONE/NAVIGATING → super.tick() only if navigation has active path
+  ├── POSITIONING → direct velocity toward target
+  ├── PEEKING → slide velocity toward peek position
+  └── RETURNING → slide velocity toward cover center
+
+SoldierCombatGoal checks:
+  - peekState == EXPOSED → can shoot
+  - coverManager.isPinned() → stay down
 ```
-
-This prevents tiny combat/pathfinding movement from invalidating state.
-
----
-
-## Data Flow (Single Source of Truth)
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    SoldierEntity                              │
-│                                                              │
-│  tick() {                                                    │
-│      super.tick();                                           │
-│      // NO coverBehaviorManager.tick() call                  │
-│  }                                                           │
-│                                                              │
-│  Goal Selector picks CoverTacticalGoal                       │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │              CoverTacticalGoal.tick()                  │ │
-│  │                                                        │ │
-│  │  coverManager.tickSuppression(inCover)                │ │
-│  │                                                        │ │
-│  │  switch (coverManager.getState()) {                   │ │
-│  │      SEEKING_COVER → navigate, check reached          │ │
-│  │      IN_COVER → evaluate, manage flags, tickPeekState │ │
-│  │      SUPPRESSED → tickSuppressedInCover()             │ │
-│  │                   (includes tickDuckingBack if needed) │ │
-│  │      REPOSITIONING → navigate to new cover            │ │
-│  │  }                                                    │ │
-│  │                                                        │ │
-│  │  coverManager.setState(newState) // Goal decides       │ │
-│  │  coverManager.setCurrentCover(cover) // Goal decides   │ │
-│  │  coverManager.setTargetCover(cover) // Goal decides    │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  SoldierCombatGoal checks:                                   │
-│      coverManager.isInCover() → modify shooting             │
-│      coverManager.isPinned() → don't shoot                  │
-│      coverManager.onPeekShot() → after successful shot      │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Key Principle:**
-- CoverBehaviorManager = MEMORY (passive)
-- CoverTacticalGoal = BEHAVIOR (active)
-- Single decision point = no race conditions
 
 ---
 
 ## Debug Commands
 
+All debug is now under `/stevesarmy_debug`:
+
 | Command | Purpose |
 |---------|---------|
-| `/stevesarmy_cover state` | Show cover state for nearby soldiers |
-| `/stevesarmy_cover log on` | Enable cover behavior logging |
-| `/stevesarmy_cover soldiers` | Toggle soldier cover visualization |
-| `/stevesarmy_cover threats` | Show threat direction analysis |
-| `/stevesarmy_cover reservations` | Show cover reservations |
-| `/stevesarmy_cover pose [crawl\|stand\|status\|noai]` | Force crawl/stand |
-| `/stevesarmy_cover pose set <part> <axis> <value>` | Live angle adjustment |
-| `/stevesarmy_cover pose [angles\|deg]` | Angle reports |
-| `/stevesarmy_cover pose reset` | Reset to defaults |
+| `/stevesarmy_debug all` | Enable ALL debug (logging + render + combat overlay) |
+| `/stevesarmy_debug log cover [on\|off]` | Toggle cover behavior logging |
+| `/stevesarmy_debug render soldiers` | Toggle soldier cover viz lines/labels |
+| `/stevesarmy_debug render peekcandidates` | Toggle peek candidate viz |
+| `/stevesarmy_debug render rays` | Toggle raycast viz |
+| `/stevesarmy_debug render solid` | Toggle solid block viz |
+| `/stevesarmy_debug render coverpoints` | Toggle cover point wireframes |
+| `/stevesarmy_debug render mode [off\|minimal\|verbose]` | Combat overlay mode |
+| `/stevesarmy_debug info state` | Cover state + peek timing + movement intent + ctrlDist + speed |
+| `/stevesarmy_debug info threats` | Threat direction analysis |
+| `/stevesarmy_debug info reservations` | Cover reservations |
+| `/stevesarmy_debug info suppression` | Suppression levels |
+| `/stevesarmy_debug info scan [radius]` | Scan for cover points |
+| `/stevesarmy_debug info target [entity]` | Scan with threat |
+| `/stevesarmy_debug info best [radius]` | Find best cover |
+| `/stevesarmy_debug info debug <x> <y> <z>` | Debug specific position |
+| `/stevesarmy_debug control peek` | Force peek |
+| `/stevesarmy_debug control reposition` | Force reposition |
+| `/stevesarmy_debug control pose [...]` | Pose commands (crawl, stand, status, noai, angles, set, reset) |
+| `/stevesarmy_debug status` | Show all toggle states |
+
+`/stevesarmy debug` still works as shortcut for `/stevesarmy_debug all`.
 
 ---
 
@@ -373,38 +345,32 @@ This prevents tiny combat/pathfinding movement from invalidating state.
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `CoverBehaviorManager.java` | combat/cover/ | Passive data holder (state, cover, suppression) |
+| `CoverBehaviorManager.java` | combat/cover/ | Passive data holder (state, cover, suppression, peek) |
 | `CoverTacticalGoal.java` | entity/ai/ | Full state machine, peek system, decisions |
+| `CoverPositionController.java` | entity/ai/ | Custom MoveControl (direct velocity positioning) |
 | `CoverFinder.java` | combat/cover/ | Cover search and scoring |
 | `CoverQualityEvaluator.java` | combat/cover/ | Cover raycast quality evaluation |
 | `CoverPoint.java` | combat/cover/ | Cover position data class |
-| `CoverType.java` | combat/cover/ | HALF/FULL/NONE enum |
+| `CoverType.java` | combat/cover/ | HALF/FULL/CONCEALMENT/NONE enum |
 | `CoverReservationManager.java` | combat/cover/ | Multiplayer cover coordination |
 | `CoverDebugManager.java` | combat/cover/ | Debug visualization helpers |
 | `SuppressionTracker.java` | combat/cover/ | Suppression decay and thresholds |
-| `IncomingFireHandler.java` | combat/cover/ | Suppression from incoming fire |
 | `PoseConfig.java` | client/model/ | Prone pose adjustable angles |
 | `SoldierModel.java` | client/model/ | Custom HumanoidModel with prone pose |
 | `SoldierRenderer.java` | client/renderer/ | swimAmount-driven setupRotations |
 | `GunIntegration.java` | combat/ | TaCZ reflection wrapper (includes crawl) |
+| `CoverDebugRenderer.java` | client/ | Cover debug overlay rendering |
+| `CombatDebugRenderer.java` | client/ | Combat detection debug overlay |
+| `CombatDebugCommand.java` | command/ | `/stevesarmy_debug` command |
+| `StevesArmyCommand.java` | command/ | `/stevesarmy` command (redirect) |
 
 ---
 
 ## Key Bug Fixes
 
-| Bug | Fix | File |
-|-----|-----|------|
-| Soldier walks while crawling after cover exit | `clearCover()` calls `GunIntegration.crawl(false)` | CoverBehaviorManager.java:197 |
-| Soldier frozen at peek position when suppressed | `tickSuppressedInCover()` calls `tickDuckingBack()` when DUCKING_BACK | CoverTacticalGoal.java:625-627 |
-
----
-
-## Future Improvements
-
-1. **Bounding Overwatch**: One soldier moves while others cover
-2. **Cover-to-cover movement**: Planned tactical movement
-3. **Peek direction optimization**: Face threat direction while in cover
-4. **Suppression per-threat**: Track which enemy is suppressing most
-5. **Cover destruction detection**: Detect when cover block is destroyed
-6. **Multi-position peeking**: Randomize peek side (left/right) for full cover
-7. **Grenade suppression**: Area-of-effect suppression from explosions
+| Bug | Root Cause | Fix | File |
+|-----|-----------|-----|------|
+| Soldier stuck in DUCKING_BACK forever | `timeToReturnToCover()` used target offset by -0.5 in protected direction, making it farther from soldier. Combined with `tickInCover()` targeting raw center, created dual-target oscillation | Use raw `coverPos.getCenter()` in `timeToReturnToCover()`, same as `tickInCover()` line 407 | CoverTacticalGoal.java |
+| Soldier frozen, no movement during peek | `CoverPositionController.tick()` had empty NONE/NAVIGATING cases, vanilla `MoveControl.tick()` never ran | Call `super.tick()` for NONE/NAVIGATING when navigation has active path | CoverPositionController.java |
+| Controller velocity fighting super.tick() | `super.tick()` running unconditionally set `zza=0`, friction killed custom velocity | Only call `super.tick()` when `!navigation.isDone()` | CoverPositionController.java |
+| Soldier walks while crawling after cover exit | `clearCover()` didn't disable crawl | `clearCover()` calls `GunIntegration.crawl(false)` | CoverBehaviorManager.java |
