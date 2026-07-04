@@ -3,17 +3,17 @@
 ## Build & Run
 
 ```powershell
-# JDK 17 required
+# JDK 17 required - set every session
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
+cd steves_army
 .\gradlew build
-.\gradlew runClient        # needs .\gradlew prepareRuns first
+.\gradlew runClient        # first time only: .\gradlew prepareRuns
 ```
 
-- Mod is in `steves_army/` subdirectory, NOT repo root
-- Must set `JAVA_HOME` to JDK 17 every session
-- Build jar at `steves_army/build/libs/steves_army-0.1.0-alpha.jar`
-- Copy to test instance: `Copy-Item ...\build\libs\steves_army-0.1.0-alpha.jar C:\Users\lauya\curseforge\minecraft\Instances\Test\mods\ -Force`
-- Check log at `C:\Users\lauya\curseforge\minecraft\Instances\Test\logs` or `C:\Modding\Steve's_Army_parent\Debug` (user uploaded)
+- **Workdir matters:** gradlew is in `steves_army/`, NOT repo root
+- Build jar: `steves_army/build/libs/steves_army-0.1.0-alpha.jar`
+- Copy to test instance: `Copy-Item steves_army\build\libs\steves_army-0.1.0-alpha.jar C:\Users\lauya\curseforge\minecraft\Instances\Test\mods\ -Force`
+- Logs: `C:\Users\lauya\curseforge\minecraft\Instances\Test\logs` or `C:\Modding\Steve's_Army_parent\Debug`
 
 ## Coding guidelines
 - Do not always choose the easiest or quickest fix. Prioritize correctness and long-term stability.
