@@ -373,11 +373,14 @@ SquadMode enum { FOLLOW, HOLD }
 - [ ] Detailed Planning UI
 
 
-### Phase 5: Respawn System (Next)
-- [ ] Death event handler
-- [ ] Squadmate selection UI
-- [ ] Transfer player to squadmate
-- [ ] Squad persistence on player swap
+### Phase 5: Respawn System ✓
+- [x] Death event handler (LivingDeathEvent + PlayerRespawnEvent)
+- [x] Auto-select nearest living squadmate
+- [x] Transfer player to squadmate position with camera transition
+- [x] Transfer soldier equipment to player
+- [x] Remove soldier from squad and despawn
+- [x] Squad persistence on player swap (player remains leader with same UUID)
+- [x] Camera transition system (shows soldier view before respawn)
 
 ### Phase 5b: Cover Bugfixes & AI Polish (Current Priority)
 - [X] **Fix suppression near-miss detection** — Bullets landing within 3 blocks should trigger `SuppressionTracker.onNearMiss()`. Investigate `IncomingFireHandler` event wiring — projectile impact events may not fire reliably. Add debug logging to verify trigger rate
@@ -432,7 +435,7 @@ SquadMode enum { FOLLOW, HOLD }
 2. [x] Soldiers follow player and engage enemies
 3. [x] Soldiers take cover intelligently
 4. [x] Player can toggle Follow/Hold
-5. [ ] Player can respawn as squadmate
+5. [x] Player can respawn as squadmate
 6. [x] Fair target acquisition (no X-ray)
 7. [x] Compatible with TaCZ weapons
 
@@ -461,6 +464,7 @@ steves_army/src/main/java/com/stevesarmy/
 ├── item/                    # RecruitItem, spawn eggs
 ├── network/                 # Packets: squad mode, debug, inventory, ping, targets
 ├── ping/                    # Ping system (look-at, move-to, enemy-spotted, etc.)
+├── respawn/                 # Enlisted-style respawn: DeathHandler, RespawnManager, CameraController
 ├── squad/                   # SquadData, SquadManager (FOLLOW/HOLD modes)
 ├── registry/                # ModEntities, ModItems, ModMenuTypes
 └── util/                    # MathUtils, RateLimiter, ScreenPos
