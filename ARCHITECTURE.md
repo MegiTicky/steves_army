@@ -108,10 +108,10 @@ The cover system is the core tactical AI module. It consists of several single-r
 
 ```mermaid
 flowchart TD
-    CBM[CoverBehaviorManager - State machine + fields] --> CTG[CoverTacticalGoal - tick() orchestration]
-    CF[CoverFinder - Search, score, evaluate] --> CQE[CoverQualityEvaluator - Raycast-based quality]
+    CBM["CoverBehaviorManager - State machine + fields"] --> CTG["CoverTacticalGoal - tick() orchestration"]
+    CF["CoverFinder - Search, score, evaluate"] --> CQE["CoverQualityEvaluator - Raycast-based quality"]
     CF --> CP[CoverPoint - Data object]
-    CRM[CoverReservationManager - Static reservation map]
+    CRM["CoverReservationManager - Static reservation map"]
     ST[SuppressionTracker - Value decay + thresholds]
     PC[PeekController - 3-state peek machine]
     CBM --> ST
@@ -126,18 +126,18 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> NO_COVER
-    NO_COVER --> SEEKING_COVER: shouldSeekCover() = true
-    SEEKING_COVER --> IN_COVER: distance < COVER_REACHED_DISTANCE
-    SEEKING_COVER --> NO_COVER: time > MAX_SEEKING_TIME_MS
-    IN_COVER --> SUPPRESSED_IN_COVER: isSuppressed() = true
-    IN_COVER --> SEEKING_COVER: drifted > COVER_VALID_DISTANCE (non-peeking)
-    IN_COVER --> NO_COVER: drifted > COVER_ABANDON_DISTANCE
-    IN_COVER --> REPOSITIONING: flanked / better cover / non-peekable
+    NO_COVER --> SEEKING_COVER: "shouldSeekCover() = true"
+    SEEKING_COVER --> IN_COVER: "distance < COVER_REACHED_DISTANCE"
+    SEEKING_COVER --> NO_COVER: "time > MAX_SEEKING_TIME_MS"
+    IN_COVER --> SUPPRESSED_IN_COVER: "isSuppressed() = true"
+    IN_COVER --> SEEKING_COVER: "drifted > COVER_VALID_DISTANCE (non-peeking)"
+    IN_COVER --> NO_COVER: "drifted > COVER_ABANDON_DISTANCE"
+    IN_COVER --> REPOSITIONING: "flanked / better cover / non-peekable"
     REPOSITIONING --> IN_COVER: reached new cover
     REPOSITIONING --> SEEKING_COVER: targetCover = null
     REPOSITIONING --> IN_COVER: target == current (early exit)
-    SUPPRESSED_IN_COVER --> IN_COVER: canPeek() && !pinned
-    SUPPRESSED_IN_COVER --> REPOSITIONING: flanked while suppressed
+    SUPPRESSED_IN_COVER --> IN_COVER: "canPeek() && !pinned"
+    SUPPRESSED_IN_COVER --> REPOSITIONING: "flanked while suppressed"
     SUPPRESSED_IN_COVER --> NO_COVER: abandoned
 ```
 
@@ -161,13 +161,13 @@ Calculated in `CoverFinder.calculateThreatAwareScore()`
 
 ```mermaid
 flowchart TD
-    A[Check height per direction] --> B{height >= 1.5?}
+    A[Check height per direction] --> B{"height >= 1.5?"}
     B -->|Yes| C[FULL - 1.0 base quality]
-    B -->|No| D{height >= 0.4?}
+    B -->|No| D{"height >= 0.4?"}
     D -->|Yes| E[HALF - 0.5 base quality]
-    D -->|No| F{height > 0?}
-    F -->|Yes| G[CONCEALMENT - 0.2 base quality]
-    F -->|No| H[NONE - 0.0 base quality]
+    D -->|No| F{"height > 0?"}
+    F -->|Yes| G["CONCEALMENT - 0.2 base quality"]
+    F -->|No| H["NONE - 0.0 base quality"]
 ```
 
 Blocks excluded from valid cover: `IronBarsBlock`, `GlassBlock`, `StainedGlassBlock`, `TintedGlassBlock`.
@@ -178,8 +178,8 @@ Blocks excluded from valid cover: `IronBarsBlock`, `GlassBlock`, `StainedGlassBl
 
 ```mermaid
 flowchart TD
-    IN[CoverPoint + ThreatEntity] --> GEN[Generate 8 standing test points - 2 columns x 4 heights]
-    IN --> GENC[Generate 4 crawl test points - at 0.4m height, 4 corners]
+    IN[CoverPoint + ThreatEntity] --> GEN["Generate 8 standing test points - 2 columns x 4 heights"]
+    IN --> GENC["Generate 4 crawl test points - at 0.4m height, 4 corners"]
     GEN --> RAY[Cast ray from threat eye to each point]
     GENC --> RAY
     RAY --> COUNT[Count blocked rays]
@@ -189,7 +189,7 @@ flowchart TD
     TYPE -->|>2 standing blocked| CONCEALMENT
     TYPE -->|otherwise| NONE
     TYPE --> SHOOT[canShootAtTarget = LOS check from cover offset or adjacent peek pos]
-    SHOOT --> Q[quality = max(standing, crawl) + shootBonus 0.15 + stanceBonus 0.1]
+    SHOOT --> Q["quality = max(standing, crawl) + shootBonus 0.15 + stanceBonus 0.1"]
 ```
 
 ### 2.5 Cover Finder
@@ -198,15 +198,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN[BlockPos center, radius, threat] --> LOOP[Iterate SEARCH_OFFSETS - sorted by dist^2 ascending]
-    LOOP --> CHECK{isValidCoverPosition? - ground is solid - standing+head are air - no fluid}
+    IN[BlockPos center, radius, threat] --> LOOP["Iterate SEARCH_OFFSETS - sorted by dist^2 ascending"]
+    LOOP --> CHECK{"isValidCoverPosition? - ground is solid - standing+head are air - no fluid"}
     CHECK -->|No| NEXT[next offset]
-    CHECK -->|Yes| EVAL[evaluatePosition - measure cover height per direction - determine type - raycast quality with threat - canShootFrom check - protected directions set]
+    CHECK -->|Yes| EVAL["evaluatePosition - measure cover height per direction - determine type - raycast quality with threat - canShootFrom check - protected directions set"]
     EVAL --> ADD[Add to coverPoints list]
     ADD --> LIMIT{reached MAX_COVER_POINTS=50?}
     LIMIT -->|No| NEXT
-    LIMIT -->|Yes| SCORE[Score all covers - with calculateThreatAwareScore]
-    SCORE --> FILTER{Has primary threat direction?}
+    LIMIT -->|Yes| SCORE["Score all covers - with calculateThreatAwareScore"]
+    SCORE --> FILTER{"Has primary threat direction?"}
     FILTER -->|Yes| HARD[Hard filter: prefer covers that protect from threat dir]
     HARD --> BEST[Return best scored cover]
     FILTER -->|No| BEST
@@ -242,11 +242,11 @@ stateDiagram-v2
     [*] --> HIDING: reset()
     HIDING --> MOVING_TO_PEEK: full cover, slide to adjacent
     HIDING --> EXPOSED: half cover, uncrawl
-    HIDING --> HIDING: no valid peek pos -> nonPeekableCover
+    HIDING --> HIDING: "no valid peek pos -> nonPeekableCover"
     MOVING_TO_PEEK --> EXPOSED: reached peek position
     MOVING_TO_PEEK --> HIDING: movement failed
-    EXPOSED --> RETURNING_TO_COVER: time > maxExposure / target dead / suppressed
-    RETURNING_TO_COVER --> HIDING: reached cover (full) / 200ms elapsed (half)
+    EXPOSED --> RETURNING_TO_COVER: "time > maxExposure / target dead / suppressed"
+    RETURNING_TO_COVER --> HIDING: "reached cover (full) / 200ms elapsed (half)"
 ```
 
 ### 3-state Peek Flow
@@ -259,25 +259,25 @@ sequenceDiagram
     Participant Ctr as CoverPositionController
 
     Note over PC: HIDING state
-    PC->>PC: Check duck cooldown (1000ms, +2000ms if suppressed)
-    PC->>Soldier: getThreatAwareness() -> getPrimaryDirection()
+    PC->>PC: "Check duck cooldown (1000ms, +2000ms if suppressed)"
+    PC->>Soldier: "getThreatAwareness() -> getPrimaryDirection()"
     alt Half Cover (height >=0.4, <1.5)
-        PC->>Soldier: GunIntegration.crawl(false) -- stand up
+        PC->>Soldier: "GunIntegration.crawl(false) -- stand up"
         PC->>Soldier: lockRotationToCoverWall()
-        PC->>PC: enterExposed() -> state = EXPOSED
+        PC->>PC: "enterExposed() -> state = EXPOSED"
     else Full Cover (height >=1.5)
-        PC->>Cover: computePeekPositionStatic() -> check 4 adjacent blocks
+        PC->>Cover: "computePeekPositionStatic() -> check 4 adjacent blocks"
         alt No valid peek pos
             PC->>CBM: setNonPeekableCover(true)
             PC->>PC: stay HIDING -> eventually reposition
         else Valid peek
-            PC->>Ctr: moveTo(peekPos, PEEK_REACHED_DISTANCE, SPEED=0.75)
-            PC->>PC: state = MOVING_TO_PEEK
+            PC->>Ctr: "moveTo(peekPos, PEEK_REACHED_DISTANCE, SPEED=0.75)"
+            PC->>PC: "state = MOVING_TO_PEEK"
         end
     end
 
     Note over PC: EXPOSED state
-    PC->>PC: Wait random exposure (3000-8000ms)
+    PC->>PC: "Wait random exposure (3000-8000ms)"
     alt Target dead
         PC->>PC: enterReturning()
     else Suppressed
@@ -288,15 +288,15 @@ sequenceDiagram
 
     Note over PC: RETURNING_TO_COVER state
     alt Half cover
-        PC->>Soldier: GunIntegration.crawl(true) -- duck down
-        PC->>PC: after 200ms -> completeReturn()
+        PC->>Soldier: "GunIntegration.crawl(true) -- duck down"
+        PC->>PC: "after 200ms -> completeReturn()"
     else Full cover
-        PC->>Ctr: moveTo(coverReturnPos, TOLERANCE=0.3, SPEED=1.0)
-        Ctr->>PC: REACHED_TARGET -> completeReturn()
+        PC->>Ctr: "moveTo(coverReturnPos, TOLERANCE=0.3, SPEED=1.0)"
+        Ctr->>PC: "REACHED_TARGET -> completeReturn()"
     end
 
-    Note over PC: HIDING state (again)
-    PC->>PC: recordPeekCycle() -- increment counter
+    Note over PC: "HIDING state (again)"
+    PC->>PC: "recordPeekCycle() -- increment counter"
     PC->>CBM: recordPeekCycle()
 ```
 
@@ -330,12 +330,12 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE: suppression = 0
-    IDLE --> SUPPRESSED: value > 0.5
-    IDLE --> PINNED: value > 0.7
-    SUPPRESSED --> PINNED: value > 0.7
-    SUPPRESSED --> IDLE: value decays < 0.5
-    PINNED --> SUPPRESSED: value decays < 0.7
-    PINNED --> IDLE: value decays < 0.5
+    IDLE --> SUPPRESSED: "value > 0.5"
+    IDLE --> PINNED: "value > 0.7"
+    SUPPRESSED --> PINNED: "value > 0.7"
+    SUPPRESSED --> IDLE: "value decays < 0.5"
+    PINNED --> SUPPRESSED: "value decays < 0.7"
+    PINNED --> IDLE: "value decays < 0.5"
 ```
 
 **Decay:**
@@ -346,11 +346,11 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    SUP[Suppression Value - 0.0 - 1.0] --> EVAL{suppression level}
+    SUP["Suppression Value - 0.0 - 1.0"] --> EVAL{suppression level}
     EVAL -->|> 0.5| S[SUPPRESSED]
     EVAL -->|> 0.7| P[PINNED]
-    P -->|canPeek = false| HIDE[Stays hidden - MIN_PEEK_TIME_MS = 2500 - after last suppression event]
-    S -->|canPeek if timeSinceLast > 2500| PEEK[Can peek]
+    P -->|"canPeek = false"| HIDE["Stays hidden - MIN_PEEK_TIME_MS = 2500 - after last suppression event"]
+    S -->|"canPeek if timeSinceLast > 2500"| PEEK[Can peek]
     EVAL -->|< 0.5| NORMAL[Normal state]
 ```
 
@@ -386,26 +386,26 @@ See [Section 15: Suppression Fire Lifecycle](#15-suppression-fire-lifecycle).
 
 ```mermaid
 flowchart TD
-    TICK[tick()] --> T[tick threatTracker]
-    T --> PT[getPotentialTargets() - Monsters, TargetEntities, Players, Soldiers]
-    PT --> DT[detectionSystem.tick()]
-    DT --> TA[Feed detected -> ThreatAwareness]
-    TA --> GUN{Has TaCZ gun?}
+    TICK["tick()"] --> T["tick threatTracker"]
+    T --> PT["getPotentialTargets() - Monsters, TargetEntities, Players, Soldiers"]
+    PT --> DT["detectionSystem.tick()"]
+    DT --> TA["Feed detected -> ThreatAwareness"]
+    TA --> GUN{"Has TaCZ gun?"}
     GUN -->|Yes| GI[handleGunInitialization]
-    GUN -->|No| TARGET{target alive + valid?}
+    GUN -->|No| TARGET{"target alive + valid?"}
     GI --> TARGET
     TARGET -->|No target| SEARCH[findNewTarget]
-    SEARCH --> CT{inCover?}
+    SEARCH --> CT{"inCover?"}
     CT -->|Yes| PEEK[tickCoverPeekCycle]
     CT -->|No| SCAN[tickScanning]
     TARGET -->|Has target| COMBAT
-    COMBAT[tickCombat] --> LOS{has LOS?}
+    COMBAT[tickCombat] --> LOS{"has LOS?"}
     LOS -->|Yes + suppressing| REL[Release suppression]
     LOS -->|Yes| TGC[tickGunCombat]
-    LOS -->|No| SUPP{shouldSuppressTarget?}
+    LOS -->|No| SUPP{"shouldSuppressTarget?"}
     SUPP -->|Yes| SF[tickSuppressionFire]
     SUPP -->|No| STOP[Stop suppressing]
-    TGC --> COVER{inCover?}
+    TGC --> COVER{"inCover?"}
     COVER -->|Yes| PEEK_CYC[tickCoverPeekCycle]
 ```
 
@@ -413,18 +413,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN[target + LOS] --> EXPO[ExposureCalculator.getBestAimPoint]
-    EXPO --> CHECK{canShoot?}
-    CHECK -->|No| BLOCKED{pathBlockedCounter >= maxTicks?}
+    IN["target + LOS"] --> EXPO["ExposureCalculator.getBestAimPoint"]
+    EXPO --> CHECK{"canShoot?"}
+    CHECK -->|No| BLOCKED{"pathBlockedCounter >= maxTicks?"}
     BLOCKED -->|Yes| SWITCH[findNewTarget]
     BLOCKED -->|No| WAIT[return]
-    CHECK -->|Yes| FF{FriendlyFireChecker isSafeToShoot?}
+    CHECK -->|Yes| FF{"FriendlyFireChecker isSafeToShoot?"}
     FF -->|No| BLOCK
-    FF -->|Yes| AIM[GunIntegration.aim(true)]
-    AIM --> ADS{adsProgress >= 0.8?}
+    FF -->|Yes| AIM["GunIntegration.aim(true)"]
+    AIM --> ADS{"adsProgress >= 0.8?"}
     ADS -->|No| WAIT_AIM[return]
     ADS -->|Yes| UAIM[updateAimQuality]
-    UAIM --> THRESH{aimQuality >= shotThreshold?}
+    UAIM --> THRESH{"aimQuality >= shotThreshold?"}
     THRESH -->|No| SWITCH_BETTER[maybe switch to better target]
     THRESH -->|Yes| SHOOT
     SHOOT -->|random < aimQuality| ACCURATE[shootWithDeviation at aimPoint]
@@ -433,9 +433,9 @@ flowchart TD
     MISS --> RECOIL
     RECOIL --> RESULT{ShootResult}
     RESULT -->|SUCCESS| OK[done]
-    RESULT -->|NEED_BOLT| BOLT[GunIntegration.bolt()]
-    RESULT -->|NO_AMMO| RELOAD[GunIntegration.reload()]
-    RESULT -->|NOT_DRAWN| DRAW[GunIntegration.draw()]
+    RESULT -->|NEED_BOLT| BOLT["GunIntegration.bolt()"]
+    RESULT -->|NO_AMMO| RELOAD["GunIntegration.reload()"]
+    RESULT -->|NOT_DRAWN| DRAW["GunIntegration.draw()"]
     RESULT -->|COOLDOWN| OK
 ```
 
@@ -465,44 +465,44 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph canUse[canUse / canContinueToUse]
+    subgraph canUse["canUse / canContinueToUse"]
         CU[canUse] --> CS{Current State}
-        CS -->|NO_COVER| SH{shouldSeekCover?}
-        SH -->|!CQB && !closeRange && (suppressed OR lowHealth OR hasThreat)| SEEK[return true]
+        CS -->|NO_COVER| SH{"shouldSeekCover?"}
+        SH -->|"!CQB && !closeRange && (suppressed OR lowHealth OR hasThreat)"| SEEK[return true]
         SH -->|otherwise| NO[return false]
         CS -->|SEEKING_COVER| YES[return true]
-        CS -->|IN_COVER / SUPPRESSED| CV{cover abandoned? dist > COVER_ABANDON_DISTANCE?}
+        CS -->|IN_COVER / SUPPRESSED| CV{"cover abandoned? dist > COVER_ABANDON_DISTANCE?"}
         CV -->|No| YES
-        CV -->|Yes| CS2[clearCover -> return false]
+        CV -->|Yes| CS2["clearCover -> return false"]
         CS -->|REPOSITIONING| YES
     end
 
-    subgraph tick[Main tick()]
+    subgraph tick["Main tick()"]
         T[tick] --> ST{State}
         ST -->|SEEKING| TS[tickSeekingCover]
         ST -->|REPOSITIONING| TR[tickRepositioning]
         ST -->|IN_COVER| TI[tickInCover]
         ST -->|SUPPRESSED| TSI[tickSuppressedInCover]
 
-        TS --> S1{targetCover null?}
+        TS --> S1{"targetCover null?"}
         S1 -->|Yes| FIND[findAndMoveToCover]
-        S1 -->|No| DIST{dist < REACHED?}
-        DIST -->|Yes| REACH[onCoverReached -> IN_COVER]
-        DIST -->|No| NAV{nav stuck?}
-        NAV -->|>60 ticks| BLACK[blacklist + find new cover]
+        S1 -->|No| DIST{"dist < REACHED?"}
+        DIST -->|Yes| REACH["onCoverReached -> IN_COVER"]
+        DIST -->|No| NAV{"nav stuck?"}
+        NAV -->|>60 ticks| BLACK["blacklist + find new cover"]
         NAV -->|time > 10s| ABORT[back to NO_COVER]
 
-        TI --> FLANK{shouldRepositionForFlank?}
+        TI --> FLANK{"shouldRepositionForFlank?"}
         FLANK -->|Yes| REPO[startRepositioning]
-        FLANK -->|No| SUPP{isSuppressed?}
-        SUPP -->|Yes| SET_SUPP[state = SUPPRESSED_IN_COVER]
-        SUPP -->|No| LEAVE{shouldExitCoverForFollow?}
-        LEAVE -->|Yes| CLR[clearCover -> NO_COVER]
+        FLANK -->|No| SUPP{"isSuppressed?"}
+        SUPP -->|Yes| SET_SUPP["state = SUPPRESSED_IN_COVER"]
+        SUPP -->|No| LEAVE{"shouldExitCoverForFollow?"}
+        LEAVE -->|Yes| CLR["clearCover -> NO_COVER"]
         LEAVE -->|No| PEEK[delegate to PeekController.tick]
         PEEK --> EVAL{every 60 ticks}
-        EVAL --> BETTER{better cover found?}
-        BETTER -->|score improvement > hysteresis| REPO
-        BETTER -->|threat dir changed > 120 deg| REPO
+        EVAL --> BETTER{"better cover found?"}
+        BETTER -->|"score improvement > hysteresis"| REPO
+        BETTER -->|"threat dir changed > 120 deg"| REPO
         BETTER -->|non-peekable requested| REPO
     end
 ```
@@ -511,19 +511,19 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN[threatDirection - threatList - squadCtx] --> MODE{Mode}
-    MODE -->|HOLD| HOLD[searchCenter = holdPosition - radius = 12]
-    MODE -->|FOLLOW + suppressed| FOLL1[searchCenter = soldierPos - radius = 12]
-    MODE -->|FOLLOW + not suppressed| FOLL2[searchCenter = ownerPos - radius = 15]
-    MODE -->|Enemy (no owner)| ENEMY[searchCenter = soldierPos - radius = 12]
+    IN["threatDirection - threatList - squadCtx"] --> MODE{Mode}
+    MODE -->|HOLD| HOLD["searchCenter = holdPosition - radius = 12"]
+    MODE -->|FOLLOW + suppressed| FOLL1["searchCenter = soldierPos - radius = 12"]
+    MODE -->|FOLLOW + not suppressed| FOLL2["searchCenter = ownerPos - radius = 15"]
+    MODE -->|Enemy (no owner)| ENEMY["searchCenter = soldierPos - radius = 12"]
     HOLD --> C1[CoverFinder.findBestCover - with squadCtx]
     FOLL1 --> C1
     FOLL2 --> C1
     ENEMY --> C1
-    C1 --> FOUND{result present?}
-    FOUND -->|No| C2[fallback: findBestCover - without squadCtx]
-    FOUND -->|Yes| RESERVE{CoverReservationManager.reserve?}
-    C2 --> C3[fallback: findBestCover - without squadCtx at all]
+    C1 --> FOUND{"result present?"}
+    FOUND -->|No| C2["fallback: findBestCover - without squadCtx"]
+    C2 --> C3["fallback: findBestCover - without squadCtx at all"]
+    FOUND -->|Yes| RESERVE{"CoverReservationManager.reserve?"}
     RESERVE -->|Success| MOVE[moveToCover via PathNavigation]
     RESERVE -->|Failed| DONE[return]
 ```
@@ -532,15 +532,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN[CoverPoint wallPos] --> PATH[navigation.createPath - to standing position]
-    PATH --> REACH{path.canReach()?}
-    REACH -->|Yes| NAV[navigation.moveTo(path, 1.2)]
-    REACH -->|No, but nodes exist| CHECK{endpoint dist^2 <= 4 && yDiff <= 1?}
+    IN[CoverPoint wallPos] --> PATH["navigation.createPath - to standing position"]
+    PATH --> REACH{"path.canReach()?"}
+    REACH -->|Yes| NAV["navigation.moveTo(path, 1.2)"]
+    REACH -->|No, but nodes exist| CHECK{"endpoint dist^2 <= 4 && yDiff <= 1?"}
     CHECK -->|Yes| NAV
-    CHECK -->|No| FAIL{path == null && not retry?}
+    CHECK -->|No| FAIL{"path == null && not retry?"}
     REACH -->|No nodes| FAIL
-    FAIL -->|Yes| RETRY[save as pendingRetryCover -> retry next tick]
-    FAIL -->|No (already retried)| BLACK[blacklistCover -> PATH_FAILED]
+    FAIL -->|Yes| RETRY["save as pendingRetryCover -> retry next tick"]
+    FAIL -->|No (already retried)| BLACK["blacklistCover -> PATH_FAILED"]
 ```
 
 ### Hysteresis for Cover Switching
@@ -583,15 +583,15 @@ SquadData {
 
 ```mermaid
 flowchart TD
-    SM[SquadManager] --> SBY_ID[Map: squadId -> SquadData]
-    SM --> SBY_LEADER[Map: leaderId -> SquadData]
-    SM --> SBY_MEMBER[Map: memberId -> SquadData]
+    SM[SquadManager] --> SBY_ID["Map: squadId -> SquadData"]
+    SM --> SBY_LEADER["Map: leaderId -> SquadData"]
+    SM --> SBY_MEMBER["Map: memberId -> SquadData"]
     
     CREATE[createSquad] --> SBY_LEADER
     CREATE --> SBY_ID
     
     ADD[addMemberToSquad] --> SBY_MEMBER
-    SBY_MEMBER --> REM[removeMemberFromSquad -> cleanup]
+    SBY_MEMBER --> REM["removeMemberFromSquad -> cleanup"]
 ```
 
 ### 7.3 Squad Cover Context
@@ -646,21 +646,21 @@ SquadMode.HOLD   -- soldier holds position, seeks cover near hold pos
 
 ```mermaid
 flowchart TD
-    TICK[tick(soldier, potentialTargets)] --> LOOP[For each potential target]
-    LOOP --> LOS{hasLineOfSight?}
+    TICK["tick(soldier, potentialTargets)"] --> LOOP[For each potential target]
+    LOOP --> LOS{"hasLineOfSight?"}
     LOS -->|Yes| ARC{Arc check}
-    ARC -->|In focused arc <=96 blocks| FOCUSED[baseRate = 12.0]
-    ARC -->|In peripheral arc <=32 blocks| PERIPHERAL[baseRate = 3.0]
-    ARC -->|Outside both| SKIP[rate = 0]
-    FOCUSED --> FACTORS[Multiply by: distanceFactor exposureFactor movementFactor brightnessFactor]
+    ARC -->|In focused arc <=96 blocks| FOCUSED["baseRate = 12.0"]
+    ARC -->|In peripheral arc <=32 blocks| PERIPHERAL["baseRate = 3.0"]
+    ARC -->|Outside both| SKIP["rate = 0"]
+    FOCUSED --> FACTORS["Multiply by: distanceFactor exposureFactor movementFactor brightnessFactor"]
     PERIPHERAL --> FACTORS
-    FACTORS --> RANDOM[x (0.5 + random)]
-    RANDOM --> BONUS{first contact? !wasInLOS && focused}
-    BONUS -->|Yes| ADD[+20 bonus points]
-    BONUS -->|No| ACCUM[accumulatedPoints += points]
-    LOS -->|No| DECAY[accumulatedPoints -= 3.0]
+    FACTORS --> RANDOM["x (0.5 + random)"]
+    RANDOM --> BONUS{"first contact? !wasInLOS && focused"}
+    BONUS -->|Yes| ADD["+20 bonus points"]
+    BONUS -->|No| ACCUM["accumulatedPoints += points"]
+    LOS -->|No| DECAY["accumulatedPoints -= 3.0"]
     ACCUM --> CLAMP[clamp 0-200]
-    CLARM --> CHECK{points >= 80?}
+    CLARM --> CHECK{"points >= 80?"}
     CHECK -->|Yes| DETECTED[isTargetDetected = true]
 ```
 
@@ -690,11 +690,11 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    THREAT[ThreatAwareness] --> PD[PING_DIRECTION - weight=15.0 - from 3rd-person ping]
-    THREAT --> EP[ENEMY_PING - weight=10.0 - from enemy-spotted ping]
-    THREAT --> ED[ENTITY_DETECTED - weight=3.0 x distanceFactor - from DetectionSystem]
-    THREAT --> PE[PERIPHERAL - weight=1.0 - (legacy)]
-    THREAT --> DE[DEAD_ENTITY - weight x 0.3 - entity removed]
+    THREAT[ThreatAwareness] --> PD["PING_DIRECTION - weight=15.0 - from 3rd-person ping"]
+    THREAT --> EP["ENEMY_PING - weight=10.0 - from enemy-spotted ping"]
+    THREAT --> ED["ENTITY_DETECTED - weight=3.0 x distanceFactor - from DetectionSystem"]
+    THREAT --> PE["PERIPHERAL - weight=1.0 - (legacy)"]
+    THREAT --> DE["DEAD_ENTITY - weight x 0.3 - entity removed"]
 ```
 
 ### Smooth Direction
@@ -723,16 +723,16 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    GI[GunIntegration - static facade] --> IF[GunHandler interface]
-    IF --> FALLBACK[FallbackGunHandler - TaCZ not loaded]
-    IF --> REFLECT[ReflectionGunHandler - TaCZ loaded via reflection]
+    GI["GunIntegration - static facade"] --> IF[GunHandler interface]
+    IF --> FALLBACK["FallbackGunHandler - TaCZ not loaded"]
+    IF --> REFLECT["ReflectionGunHandler - TaCZ loaded via reflection"]
     
-    FALLBACK --> MELEE[Melee only: hasGun=false range=3.0]
+    FALLBACK --> MELEE["Melee only: hasGun=false range=3.0"]
     REFLECT --> TACZ[com.tacz.guns.api]
     
-    REFLECT --> OPERATOR[IGunOperator - shoot, reload, bolt, aim, draw]
-    REFLECT --> IGUN[IGun - getAmmoCount, getGunId, hasAmmoInBarrel]
-    REFLECT --> TIMELESS[TimelessAPI - getCommonGunIndex -> GunData - magazineSize, bolt, recoil, rpm, inaccuracy]
+    REFLECT --> OPERATOR["IGunOperator - shoot, reload, bolt, aim, draw"]
+    REFLECT --> IGUN["IGun - getAmmoCount, getGunId, hasAmmoInBarrel"]
+    REFLECT --> TIMELESS["TimelessAPI - getCommonGunIndex -> GunData - magazineSize, bolt, recoil, rpm, inaccuracy"]
 ```
 
 ### Gun Operations (ReflectionGunHandler)
@@ -852,24 +852,24 @@ sequenceDiagram
     Participant Server as Server
     Participant Soldier as SoldierEntity
 
-    Player->>Wheel: Middle Mouse -> open wheel
-    Player->>Wheel: Select type + click pos
-    Wheel->>Network: PingMessage (type, pos, author)
+    Player->>Wheel: "Middle Mouse -> open wheel"
+    Player->>Wheel: "Select type + click pos"
+    Wheel->>Network: "PingMessage (type, pos, author)"
     Network->>Server: handle(pingMessage)
-    Server->>Network: PingBroadcastMessage (to all players)
-    Server->>Soldier: receivePing(type, pos)
+    Server->>Network: "PingBroadcastMessage (to all players)"
+    Server->>Soldier: "receivePing(type, pos)"
     Soldier->>Soldier: switch based on type
 
     alt THREAT_DIRECTION
-        Soldier->>Soldier: threatAwareness.onPingDirection(pos)
-        Soldier->>Soldier: pingThreatPos = pos (20s TTL)
-        Soldier->>Soldier: forcedTargetPos = pos (10s TTL)
+        Soldier->>Soldier: "threatAwareness.onPingDirection(pos)"
+        Soldier->>Soldier: "pingThreatPos = pos (20s TTL)"
+        Soldier->>Soldier: "forcedTargetPos = pos (10s TTL)"
     else GO_TO / SEND
-        Soldier->>Soldier: pingMoveTarget = pos (15s TTL)
-        Soldier->>Soldier: setSquadMode(HOLD)
+        Soldier->>Soldier: "pingMoveTarget = pos (15s TTL)"
+        Soldier->>Soldier: "setSquadMode(HOLD)"
     else FOLLOW / HOLD
         Soldier->>Soldier: clear threat data
-        Soldier->>Soldier: setSquadMode(FOLLOW or HOLD)
+        Soldier->>Soldier: "setSquadMode(FOLLOW or HOLD)"
     end
 ```
 
@@ -907,23 +907,23 @@ sequenceDiagram
 
     Note over Client,Server: Player-initiated
     Client->>Server: ToggleSquadModeMessage
-    Server->>Soldier: setSquadMode()
+    Server->>Soldier: "setSquadMode()"
 
     Client->>Server: FormationMessage
-    Server->>SquadManager: setSquadFormation()
+    Server->>SquadManager: "setSquadFormation()"
 
     Client->>Server: CQBToggleMessage
-    Server->>SquadData: setCQB()
+    Server->>SquadData: "setCQB()"
 
     Client->>Server: PingMessage
-    Server->>Soldier: receivePing(type, pos)
-    Server->>Client: PingBroadcastMessage (to all)
+    Server->>Soldier: "receivePing(type, pos)"
+    Server->>Client: "PingBroadcastMessage (to all)"
 
     Note over Client,Server: Debug
     Client->>Server: DebugMessage
-    Server->>CoverTacticalGoal: setDebugLogging()
+    Server->>CoverTacticalGoal: "setDebugLogging()"
 
-    Note over Client,Server: Server -> Client
+    Note over Client,Server: "Server -> Client"
     Server->>Client: PotentialTargetsDebugMessage
     Client->>ClientHUD: Update overlay
 
@@ -948,17 +948,17 @@ flowchart TD
     G[G key pressed] --> FH[FormationWheelHandler]
     FH --> FW[FormationWheelRenderer]
     FW --> SELECT{Selected option}
-    SELECT -->|Toggle mode| TSM[ToggleSquadModeMessage -> Server]
-    SELECT -->|Set formation| FM[FormationMessage -> Server]
-    SELECT -->|Toggle CQB| CQB[CQBToggleMessage -> Server]
+    SELECT -->|Toggle mode| TSM["ToggleSquadModeMessage -> Server"]
+    SELECT -->|Set formation| FM["FormationMessage -> Server"]
+    SELECT -->|Toggle CQB| CQB["CQBToggleMessage -> Server"]
 
     H[H key pressed] --> KH[KeyInputHandler]
-    KH --> DH[DebugMessage -> Server]
+    KH --> DH["DebugMessage -> Server"]
 
     MM[Middle Mouse] --> PW[PingWheelHandler]
     PW --> PWR[PingWheelRenderer]
     PW --> PING_SELECT{Selected ping type}
-    PING_SELECT -->|Click world pos| PM[PingMessage -> Server]
+    PING_SELECT -->|Click world pos| PM["PingMessage -> Server"]
 ```
 
 ### Client Renderers
@@ -981,36 +981,36 @@ This section ties together `SoldierCombatGoal`, `SquadThreatIntel`, and `Suppres
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> EVALUATING: tick() -> target not reachable
+    IDLE --> EVALUATING: "tick() -> target not reachable"
     EVALUATING --> IDLE: has LOS to primary target
-    EVALUATING --> CLAIMING: shouldSuppressTarget() = true
-    CLAIMING --> CLAIMING: tryMarkThreatSuppressed()
+    EVALUATING --> CLAIMING: "shouldSuppressTarget() = true"
+    CLAIMING --> CLAIMING: "tryMarkThreatSuppressed()"
     CLAIMING --> IDLE: all threats already suppressed
     CLAIMING --> SUPPRESSING: claim succeeded
     SUPPRESSING --> SUPPRESSING: tick suppression fire
     
     state SUPPRESSING {
         [*] --> AIMING
-        AIMING --> WAITING_ADS: aim() called
-        WAITING_ADS --> FIRING: adsProgress >= 0.5
+        AIMING --> WAITING_ADS: "aim() called"
+        WAITING_ADS --> FIRING: "adsProgress >= 0.5"
         
         state FIRING {
             [*] --> BURSTING
-            BURSTING --> BURSTING: fire burst shot - burstShotsFired++
-            BURSTING --> COOLDOWN: burstShotsFired >= 3
-            COOLDOWN --> BURSTING: cooldown expired (0.8s)
+            BURSTING --> BURSTING: "fire burst shot - burstShotsFired++"
+            BURSTING --> COOLDOWN: "burstShotsFired >= 3"
+            COOLDOWN --> BURSTING: "cooldown expired (0.8s)"
             BURSTING --> RELOADING: out of ammo
             RELOADING --> BURSTING: reload complete
         }
         
-        FIRING --> MAINTAINING: remaining ticks > 0
+        FIRING --> MAINTAINING: "remaining ticks > 0"
         MAINTAINING --> FIRING: continue burst cycle
     }
     
-    SUPPRESSING --> IDLE: suppressionRemainingTicks <= 0
-    SUPPRESSING --> IDLE: LOS to suppression target lost (with 2-block tolerance)
+    SUPPRESSING --> IDLE: "suppressionRemainingTicks <= 0"
+    SUPPRESSING --> IDLE: "LOS to suppression target lost (with 2-block tolerance)"
     SUPPRESSING --> IDLE: gained LOS to primary target
-    SUPPRESSING --> IDLE: heartbeat timeout (10 ticks) -> SuppressireAssignmentManager clears
+    SUPPRESSING --> IDLE: "heartbeat timeout (10 ticks) -> SuppressireAssignmentManager clears"
     SUPPRESSING --> IDLE: threat killed by teammate
 ```
 
@@ -1043,38 +1043,38 @@ sequenceDiagram
     Participant Intel as SquadThreatIntel
     Participant Assign as SuppressireAssignmentManager
 
-    Note over Soldier: tickCombat -> no LOS to target
-    Soldier->>Soldier: shouldSuppressTarget()
-    Soldier->>Assign: assignSuppressionTargets(squad, intel, level)
+    Note over Soldier: "tickCombat -> no LOS to target"
+    Soldier->>Soldier: "shouldSuppressTarget()"
+    Soldier->>Assign: "assignSuppressionTargets(squad, intel, level)"
     Assign->>Intel: cleanup stale suppression assignments
-    Assign->>Intel: getUnsuppressedThreats()
+    Assign->>Intel: "getUnsuppressedThreats()"
     
     alt Has unsuppressed threat
-        Soldier->>Intel: tryMarkThreatSuppressed(threatId, soldierId)
-        Intel-->>Soldier: true (claimed)
-        Note over Soldier: suppressionTargetUUID = threatId
-        Note over Soldier: suppressionTargetPos = lastKnownPosition
-        Note over Soldier: suppressionDurationTicks = random(100, 160)
+        Soldier->>Intel: "tryMarkThreatSuppressed(threatId, soldierId)"
+        Intel-->>Soldier: "true (claimed)"
+        Note over Soldier: "suppressionTargetUUID = threatId"
+        Note over Soldier: "suppressionTargetPos = lastKnownPosition"
+        Note over Soldier: "suppressionDurationTicks = random(100, 160)"
     else All suppressed
         Intel-->>Soldier: false
-        Soldier->>Soldier: return false -> no suppression
+        Soldier->>Soldier: "return false -> no suppression"
     end
 
     Note over Soldier: During suppression...
     loop Every tick
-        Soldier->>Intel: updateSuppressionHeartbeat(threatId, gameTime)
+        Soldier->>Intel: "updateSuppressionHeartbeat(threatId, gameTime)"
         Soldier->>Soldier: Check LOS with 2-block tolerance
-        Soldier->>Soldier: Fire burst (3 shots, 0.8s cooldown)
+        Soldier->>Soldier: "Fire burst (3 shots, 0.8s cooldown)"
     end
 
     alt Time expired
-        Soldier->>Intel: clearThreatSuppression(threatId)
-        Soldier->>Soldier: resetBurstState()
+        Soldier->>Intel: "clearThreatSuppression(threatId)"
+        Soldier->>Soldier: "resetBurstState()"
     else LOS lost
-        Soldier->>Intel: clearThreatSuppression(threatId)
-        Soldier->>Soldier: resetBurstState()
+        Soldier->>Intel: "clearThreatSuppression(threatId)"
+        Soldier->>Soldier: "resetBurstState()"
     else Heartbeat timeout
-        Assign->>Intel: isSuppressionStale -> clear
+        Assign->>Intel: "isSuppressionStale -> clear"
     end
 ```
 
