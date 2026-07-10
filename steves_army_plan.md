@@ -357,11 +357,13 @@ SquadMode enum { FOLLOW, HOLD }
 - [x] Suppression integration (duck-back on fire, decay, pinned threshold)
 - [x] Non-peekable cover → reposition
 - [x] Crawl state correctly cleared on cover exit
-- [ ] Do pathfind from cover to current position too, to confirm that the soldier wont fall into a hole and cant get out
+- [X] Do pathfind from cover to current position too, to confirm that the soldier wont fall into a hole and cant get out
+    - [ ] Bug: soldier behind cover sometime identified as stuck and teleport hole rescue fired
 - [x] Accruacy issue. The soldier is aiming for the edge of the block instead of at the centre. This make using 1 block cover very hard
-- [ ] When peeking, the soldier only consider one target. Need to fix this
-- [ ] Make peeking less robotic
+- [X] When peeking, the soldier only consider one target. Need to fix this
+- [ ] Make peeking less robotic, variable timing
 - [x] Now the when the soldier fires from cover, the soldier consider that a bulelt flying close to himself. And get suppressed by himself. Need to fix this
+- [X] Fix how the soldier keep trying to go to creeper hole with no peek angle
 
 ### Phase 4: Squad Commands ✓
 - [x] Follow/Hold toggle
@@ -371,16 +373,16 @@ SquadMode enum { FOLLOW, HOLD }
 - [x] Squad HUD (debug overlays)
 - [ ] Attack mode
 - [ ] Detailed Planning UI
+- [ ] Suppressive fire ping
+- [ ] Dodge artillery ping (find cover with roof, switch to crawl)
 
 
-### Phase 5: Respawn System ✓
-- [x] Death event handler (LivingDeathEvent + PlayerRespawnEvent)
-- [x] Auto-select nearest living squadmate
-- [x] Transfer player to squadmate position with camera transition
-- [x] Transfer soldier equipment to player
-- [x] Remove soldier from squad and despawn
-- [x] Squad persistence on player swap (player remains leader with same UUID)
-- [x] Camera transition system (shows soldier view before respawn)
+### Phase 5: Respawn System (Next)
+- [x] Death event handler
+- [x] Squadmate selection UI
+- [x] Transfer player to squadmate
+- [x] Squad persistence on player swap
+- [x] PlayerRevive Compat
 
 ### Phase 5b: Cover Bugfixes & AI Polish (Current Priority)
 - [X] **Fix suppression near-miss detection** — Bullets landing within 3 blocks should trigger `SuppressionTracker.onNearMiss()`. Investigate `IncomingFireHandler` event wiring — projectile impact events may not fire reliably. Add debug logging to verify trigger rate
@@ -398,6 +400,8 @@ SquadMode enum { FOLLOW, HOLD }
 - [ ] UI improvements
 - [ ] Sound effects
 - [ ] Multiplayer testing
+- [ ] Use healing item
+- [ ] 
 
 ---
 
@@ -435,7 +439,7 @@ SquadMode enum { FOLLOW, HOLD }
 2. [x] Soldiers follow player and engage enemies
 3. [x] Soldiers take cover intelligently
 4. [x] Player can toggle Follow/Hold
-5. [x] Player can respawn as squadmate
+5. [ ] Player can respawn as squadmate
 6. [x] Fair target acquisition (no X-ray)
 7. [x] Compatible with TaCZ weapons
 
@@ -464,7 +468,6 @@ steves_army/src/main/java/com/stevesarmy/
 ├── item/                    # RecruitItem, spawn eggs
 ├── network/                 # Packets: squad mode, debug, inventory, ping, targets
 ├── ping/                    # Ping system (look-at, move-to, enemy-spotted, etc.)
-├── respawn/                 # Enlisted-style respawn: DeathHandler, RespawnManager, CameraController
 ├── squad/                   # SquadData, SquadManager (FOLLOW/HOLD modes)
 ├── registry/                # ModEntities, ModItems, ModMenuTypes
 └── util/                    # MathUtils, RateLimiter, ScreenPos
