@@ -401,7 +401,8 @@ SquadMode enum { FOLLOW, HOLD }
 - [ ] Sound effects
 - [ ] Multiplayer testing
 - [ ] Use healing item
-- [ ] 
+- [ ] Glowing effect for teammate/squadmate or show on minimap
+- [ ] Avoid walking into bared wire
 
 ---
 
