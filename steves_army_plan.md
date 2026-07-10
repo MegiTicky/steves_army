@@ -373,7 +373,7 @@ SquadMode enum { FOLLOW, HOLD }
 - [x] Squad HUD (debug overlays)
 - [ ] Attack mode
 - [ ] Detailed Planning UI
-- [ ] Suppressive fire ping
+- [x] Suppressive fire ping
 - [ ] Dodge artillery ping (find cover with roof, switch to crawl)
 
 
